@@ -505,7 +505,7 @@
             <div class="row">
               <button type="button" class="exbtn on" id="btn-morph" title="圆相扭曲对齐今图（默开→星钉今址；关→星移圆相画位）">配准</button>
             </div>
-            <p class="tip" style="margin:0;font-size:10px;color:var(--muted);line-height:1.4">环壁与 A–E 在画面下方：点章开环壁；「播放」按当前章地名逐个巡游（再点暂停）；「看环壁」对准当前章。无跨章串播。环壁开时，当前章每条地名一条引线连向今址；关环壁则收起。</p>
+            <p class="tip" style="margin:0;font-size:10px;color:var(--muted);line-height:1.4">环壁与 A–E 在画面下方。「播放」是吸引环定镜一圈（开场 C，再 A→E：环壁约 6 秒，章末 2 秒今图或圆相，收束全景）；再点暂停，暂停后再点继续。播中点章跳到该章；点地名则暂停并停在该点。「看环壁」退出轮播、对准当前章。环壁开时当前章每条地名一条引线；关环壁则收起。</p>
             <div class="slider-row">
               <label for="explode">图层炸开</label>
               <input id="explode" type="range" min="0" max="40" value="0" />
@@ -551,7 +551,7 @@
   <div id="ring-player" aria-label="环壁章节与地名播放">
     <div class="rp-main">
       <button type="button" id="btn-wall" title="环壁开关（点章节或「看环壁」会自动开）" aria-pressed="false">环</button>
-      <button type="button" id="btn-place-play" title="按当前章地名逐个巡游（再点暂停）" aria-pressed="false">
+      <button type="button" id="btn-place-play" title="播放吸引环：A→E 定镜一圈，再点暂停" aria-pressed="false">
         <span class="ico" aria-hidden="true">▶</span>
         <span class="lbl">播放</span>
       </button>
@@ -570,6 +570,6 @@
     </div>
   </div>
   <canvas id="c"></canvas>
-  <script type="module" src="./main.js?v=place-play-leaders-20261024b"></script>
+  <script type="module" src="./main.js?v=showcase-20261024"></script>
 </body>
 </html>

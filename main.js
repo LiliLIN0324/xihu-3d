@@ -8,8 +8,9 @@
  * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁开时 readable（近白/不吃雾）以便看清画。
  * Ring chapters (2026-10-24): A–E 章节点选→开环壁+展开该段地名（钉在环壁 gx）+镜头对准；大钮「看环壁」；无强制串播；切段不改雾/色温。
  * Ring paint (2026-10-24): 开环壁→贴图可读（白滤/高不透明/fog off）；色带压淡；章节镜头略拉近。
- * Place play (2026-10-24): 「播放」仅当前章地名按 gx 递减逐个 focusPlace（~1.8s）；再点暂停；点章/点星停播；不改雾/mood；非 A→E 串播。
- * Wall leaders (2026-10-24b): 环壁开 → 当前章每条地名一条轻弧（墙钉→今址，morph 关则画位）。关环壁收全部。不改相机。无 Bloom。
+ * Showcase (2026-10-24): ▶ 吸引环定镜一圈 ~46s（开场 C 3s → A–E 各 6s 环壁 + 2s 今图/圆相插镜 → 收束全景 3s，循环）。
+ *   环壁镜只用 cameraForGx(gx,'segment')；段内不跟点拧。镜间短缓推。不调 applyMood、不用仅圆相。弧 α=0.4。
+ * Wall leaders (2026-10-24b): 环壁开 → 当前章每条地名一条轻弧（墙钉→今址，morph 关则画位）。关环壁收全部。无 Bloom。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -492,11 +493,15 @@ let placesVisible = true;
 let namesExpanded = false; // 默认收起：只留星点；全局/单击展开短名
 let compareMode = 'overlay'; // overlay | modern | yuanxiang | swipe
 let activeSeg = 'c'; // single-select A–E (center player only)
-let placePlayTimer = 0;
-let placePlayIndex = -1;
-let placePlayList = [];
-let placePlaying = false;
-const PLACE_PLAY_DWELL_MS = 1800;
+let showcaseTimer = 0;
+let showcaseNameTimer = 0;
+let showcasePlaying = false;
+let showcasePaused = false;
+let showcaseBeat = -1;
+let showcaseBeatStart = 0;
+let showcaseBeatMs = 0;
+let showcaseNameIndex = 0;
+let showcaseSavedCompare = null;
 const basemapTextures = {};
 let currentStyle = 'night';
 const histTextures = {};
@@ -1111,8 +1116,8 @@ function makePlaceLabels() {
       `<span class="badge">${pl.seg.toUpperCase()}</span>`;
     el.addEventListener('pointerdown', (ev) => {
       ev.stopPropagation(); ev.preventDefault();
-      stopPlacePlay(); // 手切地名停播
-      // 单击：展开该星名（若全局已展开则保持），并聚焦
+      // 播中点地名：暂停并停在该点（镜头仍是 ring-paint focusPlace）
+      if (showcasePlaying) pauseShowcase({ status: false });
       if (!namesExpanded) {
         el.classList.toggle('expanded');
       } else {
@@ -1198,6 +1203,8 @@ function applySegmentFilter() {
   const allFaint = activeSeg === 'all';
   for (const L of placeLabelObjs) {
     const active = allFaint || L.seg === activeSeg;
+    // CSS2DRenderer 每帧按 object.visible 改写 style.display，只改 style 挡不住其它章地名
+    if (L.obj) L.obj.visible = active;
     if (allFaint) {
       L.el.classList.add('dim');
       L.el.style.display = '';
@@ -1516,6 +1523,8 @@ function setWallVisible(on, { status = true } = {}) {
     btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（点章节或「看环壁」会自动开）';
   }
   layoutPlacePins();
+  // 播中手动关环壁：先暂停，避免下一镜立刻再打开
+  if (!on && showcasePlaying) pauseShowcase({ status: false });
   if (status) showStatus(on ? '环壁已开 · 可贴壁看画' : '环壁已关');
 }
 
@@ -1544,104 +1553,247 @@ function setActiveSegment(id, jump = true) {
   }
 }
 
-/** 当前章内有地名则用之；否则落到第一个有地名的章（优先 C）。不跨章全湖。 */
-function resolvePlacePlaySeg() {
-  if (activeSeg && activeSeg !== 'all') {
-    if (PLACES.some((p) => p.seg === activeSeg)) return activeSeg;
-  }
-  for (const prefer of ['c', 'a', 'b', 'd', 'e']) {
-    if (PLACES.some((p) => p.seg === prefer)) return prefer;
-  }
-  const hit = SEGMENTS.find((s) => PLACES.some((p) => p.seg === s.id));
-  return hit ? hit.id : 'c';
-}
-
-/** 该章地名按 gx 递减（卷右→左）。 */
+/** 该章地名按 gx 递减（卷右→左），只用于轮流点亮，不驱动镜头。 */
 function placesForPlay(segId) {
   return PLACES.filter((p) => p.seg === segId).slice().sort((a, b) => b.gx - a.gx);
 }
+
+function segmentMidGx(id) {
+  const seg = SEGMENTS.find((s) => s.id === id);
+  if (!seg) return (GX_PAINT_MIN + GX_PAINT_MAX) / 2;
+  return (Math.max(seg.gxMin, GX_PAINT_MIN) + Math.min(seg.gxMax, GX_PAINT_MAX)) / 2;
+}
+
+/**
+ * 今图 / 圆相插镜：与环壁同方位略拉开，看见底图和弧。
+ * 不是 cameraForGx，也不跟单个地名拧。
+ */
+function cameraForFloorInsert(gx) {
+  const a = alphaFromGx(gx);
+  const rCam = WALL_R * 1.35;
+  const rTgt = WALL_R * 0.35;
+  return {
+    cam: new THREE.Vector3(rCam * Math.cos(a), 7.2, -rCam * Math.sin(a)),
+    target: new THREE.Vector3(rTgt * Math.cos(a), 0.6, -rTgt * Math.sin(a)),
+  };
+}
+
+/** 开场 3s + A–E 各 6s 环壁 + 2s 插镜 + 收束 3s = 46s。偶章今图、奇章圆相。 */
+const SHOWCASE_OPEN_MS = 3000;
+const SHOWCASE_CHAPTER_MS = 6000;
+const SHOWCASE_INSERT_MS = 2000;
+const SHOWCASE_CLOSE_MS = 3000;
+const SHOWCASE_NAME_MS = 750;
+const SHOWCASE_BEATS = [
+  { kind: 'open', seg: 'c', ms: SHOWCASE_OPEN_MS, shot: 'wall' },
+];
+['a', 'b', 'c', 'd', 'e'].forEach((seg, i) => {
+  SHOWCASE_BEATS.push({ kind: 'chapter', seg, ms: SHOWCASE_CHAPTER_MS, shot: 'wall' });
+  SHOWCASE_BEATS.push({
+    kind: 'insert',
+    seg,
+    ms: SHOWCASE_INSERT_MS,
+    shot: i % 2 === 0 ? 'map' : 'yuan',
+  });
+});
+SHOWCASE_BEATS.push({ kind: 'close', seg: 'e', ms: SHOWCASE_CLOSE_MS, shot: 'pano' });
 
 function syncPlacePlayButton() {
   const btn = document.getElementById('btn-place-play');
   if (!btn) return;
   const ico = btn.querySelector('.ico');
   const lbl = btn.querySelector('.lbl');
-  btn.classList.toggle('playing', placePlaying);
-  btn.setAttribute('aria-pressed', placePlaying ? 'true' : 'false');
-  if (ico) ico.textContent = placePlaying ? '⏸' : '▶';
-  if (lbl) lbl.textContent = placePlaying ? '暂停' : '播放';
-  btn.title = placePlaying
-    ? '暂停地名巡游'
-    : '按当前章地名逐个巡游（再点暂停）';
+  btn.classList.toggle('playing', showcasePlaying);
+  btn.setAttribute('aria-pressed', showcasePlaying ? 'true' : 'false');
+  if (ico) ico.textContent = showcasePlaying ? '⏸' : '▶';
+  if (lbl) lbl.textContent = showcasePlaying ? '暂停' : (showcasePaused ? '继续' : '播放');
+  btn.title = showcasePlaying
+    ? '暂停吸引环'
+    : (showcasePaused ? '继续吸引环' : '播放吸引环：A→E 定镜一圈，再点暂停');
 }
 
-function stopPlacePlay({ status = false } = {}) {
-  if (placePlayTimer) {
-    clearTimeout(placePlayTimer);
-    placePlayTimer = 0;
+function clearShowcaseNameTimer() {
+  if (showcaseNameTimer) {
+    clearTimeout(showcaseNameTimer);
+    showcaseNameTimer = 0;
   }
-  const was = placePlaying;
-  placePlaying = false;
-  placePlayIndex = -1;
-  placePlayList = [];
-  syncPlacePlayButton();
-  if (status && was) showStatus('已暂停地名巡游');
 }
 
-function stepPlacePlay() {
-  if (!placePlaying) return;
-  placePlayIndex += 1;
-  if (placePlayIndex >= placePlayList.length) {
-    // 停在最后一处，关播放态
-    placePlaying = false;
-    placePlayTimer = 0;
-    syncPlacePlayButton();
-    const last = placePlayList[placePlayList.length - 1];
-    showStatus(last ? `巡游结束 · ${last.short}` : '巡游结束');
-    return;
+function clearShowcaseTimers() {
+  if (showcaseTimer) {
+    clearTimeout(showcaseTimer);
+    showcaseTimer = 0;
   }
-  const pl = placePlayList[placePlayIndex];
-  ensureWallForPlay();
-  if (pl.seg !== activeSeg) setActiveSegment(pl.seg, false);
-  // 收起同段其它展开，只亮当前
+  clearShowcaseNameTimer();
+}
+
+/** 插镜只切叠合/仅今，不进仅圆相，也不动雾和色温。 */
+function showcaseCompare(mode) {
+  if (mode !== 'overlay' && mode !== 'modern') return;
+  if (compareMode === mode) return;
+  applyCompareMode(mode);
+}
+
+function pulseShowcaseName(seg) {
+  const list = placesForPlay(seg);
+  if (!list.length) return;
+  const pl = list[showcaseNameIndex % list.length];
+  showcaseNameIndex += 1;
   for (const L of placeLabelObjs) {
-    if (L.seg === pl.seg) {
-      if (L.pl.id === pl.id) L.el.classList.add('expanded');
-      else if (!namesExpanded) L.el.classList.remove('expanded');
+    if (L.seg !== seg) {
+      L.el.classList.remove('active');
+      continue;
     }
+    const on = L.pl.id === pl.id;
+    if (namesExpanded) L.el.classList.add('expanded');
+    else L.el.classList.toggle('expanded', on);
+    L.el.classList.toggle('active', on);
+    if (on) activeLabelEl = L.el;
   }
-  const L = placeLabelObjs.find((o) => o.pl.id === pl.id);
-  focusPlace(pl, L ? L.el : null);
-  const n = placePlayIndex + 1;
-  const total = placePlayList.length;
-  const seg = SEGMENTS.find((s) => s.id === pl.seg);
-  showStatus(`播放 ${n}/${total} · ${pl.short}${seg ? ' · ' + seg.name : ''}`);
-  placePlayTimer = setTimeout(stepPlacePlay, PLACE_PLAY_DWELL_MS);
 }
 
-function startPlacePlay() {
-  if (placePlaying) {
-    stopPlacePlay({ status: true });
+function scheduleShowcaseNames(seg) {
+  clearShowcaseNameTimer();
+  const tick = () => {
+    if (!showcasePlaying) return;
+    const beat = SHOWCASE_BEATS[showcaseBeat];
+    if (!beat || beat.kind !== 'chapter' || beat.seg !== seg) return;
+    pulseShowcaseName(seg);
+    showcaseNameTimer = setTimeout(tick, SHOWCASE_NAME_MS);
+  };
+  showcaseNameTimer = setTimeout(tick, SHOWCASE_NAME_MS);
+}
+
+function clearShowcaseNameActive() {
+  clearShowcaseNameTimer();
+  for (const L of placeLabelObjs) L.el.classList.remove('active');
+  activeLabelEl = null;
+}
+
+function showcaseBeatStatus(beat) {
+  const seg = SEGMENTS.find((s) => s.id === beat.seg);
+  const name = seg ? seg.name : (beat.seg || '').toUpperCase();
+  if (beat.kind === 'open') return `吸引环 · 开场 · ${name}`;
+  if (beat.kind === 'close') return '吸引环 · 收束';
+  if (beat.shot === 'map') return `吸引环 · ${name} · 今图`;
+  if (beat.shot === 'yuan') return `吸引环 · ${name} · 圆相`;
+  return `吸引环 · ${name} · 环壁`;
+}
+
+function applyShowcaseShot(beat) {
+  const gx = segmentMidGx(beat.seg);
+  if (beat.shot === 'wall') {
+    const { cam, target } = cameraForGx(gx, 'segment');
+    animateCamera(cam, target, 850);
     return;
   }
-  const segId = resolvePlacePlaySeg();
-  if (segId !== activeSeg) {
-    ensureWallForPlay();
-    setActiveSegment(segId, false);
+  if (beat.shot === 'map' || beat.shot === 'yuan') {
+    const pose = cameraForFloorInsert(gx);
+    animateCamera(pose.cam, pose.target, 700);
+    return;
+  }
+  // 收束：开场那幅全景定镜，不新造环游
+  animateCamera(
+    new THREE.Vector3(-14, 18, -16),
+    new THREE.Vector3(0, 1.2, 0),
+    1100
+  );
+}
+
+function enterShowcaseBeat(index, remainMs = 0) {
+  const beat = SHOWCASE_BEATS[index];
+  if (!beat) return;
+  clearShowcaseTimers();
+  showcaseBeat = index;
+  const hold = remainMs > 0 ? remainMs : beat.ms;
+  showcaseBeatMs = hold;
+  showcaseBeatStart = performance.now();
+
+  ensureWallForPlay();
+  if (activeSeg !== beat.seg) setActiveSegment(beat.seg, false);
+
+  if (beat.shot === 'map') showcaseCompare('modern');
+  else showcaseCompare('overlay');
+
+  applyShowcaseShot(beat);
+
+  if (beat.kind === 'chapter') {
+    showcaseNameIndex = 0;
+    pulseShowcaseName(beat.seg);
+    scheduleShowcaseNames(beat.seg);
   } else {
-    ensureWallForPlay();
+    clearShowcaseNameActive();
+    expandActiveSegmentNames();
   }
-  placePlayList = placesForPlay(segId);
-  if (!placePlayList.length) {
-    showStatus('当前章暂无地名可播');
+
+  showStatus(showcaseBeatStatus(beat));
+  if (showcasePlaying) {
+    showcaseTimer = setTimeout(advanceShowcase, hold);
+  }
+}
+
+function advanceShowcase() {
+  showcaseTimer = 0;
+  if (!showcasePlaying) return;
+  const next = (showcaseBeat + 1) % SHOWCASE_BEATS.length;
+  enterShowcaseBeat(next);
+}
+
+function pauseShowcase({ status = false } = {}) {
+  if (!showcasePlaying) return;
+  const elapsed = performance.now() - showcaseBeatStart;
+  const remain = Math.max(200, showcaseBeatMs - elapsed);
+  clearShowcaseTimers();
+  showcasePlaying = false;
+  showcasePaused = true;
+  showcaseBeatMs = remain;
+  syncPlacePlayButton();
+  if (status) showStatus('已暂停');
+}
+
+function resumeShowcase() {
+  if (!showcasePaused || showcaseBeat < 0) return;
+  showcasePaused = false;
+  showcasePlaying = true;
+  syncPlacePlayButton();
+  enterShowcaseBeat(showcaseBeat, showcaseBeatMs);
+}
+
+/** 看环壁 / 非播中点章：退出轮播。仅在离开轮播时恢复进入前的对照。 */
+function stopShowcase({ restore = false } = {}) {
+  clearShowcaseTimers();
+  showcasePlaying = false;
+  showcasePaused = false;
+  showcaseBeat = -1;
+  showcaseBeatMs = 0;
+  clearShowcaseNameActive();
+  const saved = showcaseSavedCompare;
+  showcaseSavedCompare = null;
+  syncPlacePlayButton();
+  if (restore && saved && saved !== compareMode && saved !== 'yuanxiang') {
+    applyCompareMode(saved);
+  } else if (restore && saved === 'yuanxiang') {
+    applyCompareMode('overlay');
+  }
+}
+
+function toggleShowcase() {
+  if (showcasePlaying) {
+    pauseShowcase({ status: true });
     return;
   }
-  placePlaying = true;
-  placePlayIndex = -1;
+  if (showcasePaused) {
+    resumeShowcase();
+    return;
+  }
+  showcaseSavedCompare = compareMode;
+  if (compareMode === 'yuanxiang' || compareMode === 'swipe') {
+    applyCompareMode('overlay');
+  }
+  showcasePlaying = true;
+  showcasePaused = false;
   syncPlacePlayButton();
-  const seg = SEGMENTS.find((s) => s.id === segId);
-  showStatus(`播放地名 · ${seg ? seg.name : segId} · ${placePlayList.length} 处`);
-  stepPlacePlay();
+  enterShowcaseBeat(0);
 }
 
 /** 大钮「看环壁」：开环壁 + 对准当前章（无自动串播）。 */
@@ -1659,12 +1811,19 @@ function viewRingChapter() {
 }
 
 function jumpToChapter(id) {
-  stopPlacePlay();
+  // 播中点章：跳到该章环壁定镜，继续播
+  if (showcasePlaying && id && id !== 'all') {
+    const idx = SHOWCASE_BEATS.findIndex((b) => b.kind === 'chapter' && b.seg === id);
+    if (idx >= 0) {
+      enterShowcaseBeat(idx);
+      return;
+    }
+  }
+  stopShowcase({ restore: true });
   if (!id || id === 'all') {
     setActiveSegment(id || 'all', true);
     return;
   }
-  // 点章节：开环壁、高亮该章、镜头对准该段环壁画；播放中点章则停播
   ensureWallForPlay();
   setActiveSegment(id, true);
 }
@@ -1702,7 +1861,7 @@ if (ringChapters) {
 const btnRingPlay = document.getElementById('btn-ring-play');
 if (btnRingPlay) {
   btnRingPlay.addEventListener('click', () => {
-    stopPlacePlay();
+    stopShowcase({ restore: true });
     viewRingChapter();
   });
 }
@@ -1710,7 +1869,7 @@ if (btnRingPlay) {
 const btnPlacePlay = document.getElementById('btn-place-play');
 if (btnPlacePlay) {
   btnPlacePlay.addEventListener('click', () => {
-    startPlacePlay();
+    toggleShowcase();
   });
 }
 syncPlacePlayButton();
