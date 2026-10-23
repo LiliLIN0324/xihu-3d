@@ -6,7 +6,7 @@
  * Defaults (2026-10-23 定稿): explode=0, morph ON, wall off, yuan opacity≈55%,
  * places only on active segment, night basemap (default), compare mode 叠合.
  * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁低饱和吃雾。
- * Ring player (2026-10-24): 正中偏下「播放环壁」+ A–E 章节轨；右轨不塞章节；切段不改雾/色温。
+ * Ring chapters (2026-10-24): A–E 章节点选→开环壁+镜头对准该段画；大钮「看环壁」；无强制串播；切段不改雾/色温。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -956,7 +956,7 @@ function applySegmentFilter() {
       L.el.classList.remove('dim');
       L.el.style.display = '';
       if (L.dot) { L.dot.visible = true; L.dot.material.opacity = 1; }
-      if (L.glow) { L.glow.visible = true; L.glow.material.opacity = 0.35; }
+      if (L.glow) { L.glow.visible = true; L.glow.material.opacity = 0.5; }
     } else {
       L.el.classList.remove('dim');
       L.el.style.display = 'none';
@@ -971,7 +971,7 @@ function applySegmentFilter() {
       band.visible = true;
     } else {
       band.visible = id === activeSeg;
-      band.material.opacity = id === activeSeg ? 0.22 : 0;
+      band.material.opacity = id === activeSeg ? 0.32 : 0;
     }
   }
   for (const spr of wallSegSprites) {
@@ -981,7 +981,7 @@ function applySegmentFilter() {
       spr.material.opacity = 0.35;
     } else {
       spr.visible = id === activeSeg;
-      spr.material.opacity = id === activeSeg ? 0.9 : 0;
+      spr.material.opacity = id === activeSeg ? 1 : 0;
     }
   }
 }
@@ -1159,10 +1159,12 @@ function applyCompareMode(mode) {
 function cameraForGx(gx, mode = 'place') {
   const a = alphaFromGx(gx);
   if (mode === 'segment') {
-    const r = YUAN_NS * 0.55;
+    // 环内看向该段环壁，略拉远以看见一段画（非俯视湖心）
+    const rCam = WALL_R * 0.28;
+    const rTgt = WALL_R * 0.98;
     return {
-      cam: new THREE.Vector3(r * Math.cos(a) * 0.7, 12, -r * Math.sin(a) * 0.7),
-      target: new THREE.Vector3(0, 0.4, 0),
+      cam: new THREE.Vector3(rCam * Math.cos(a), WALL_H * 0.9, -rCam * Math.sin(a)),
+      target: new THREE.Vector3(rTgt * Math.cos(a), WALL_H * 0.48, -rTgt * Math.sin(a)),
     };
   }
   const r = WALL_R * 0.5;
@@ -1246,7 +1248,7 @@ function setWallVisible(on, { status = true } = {}) {
   if (btn) {
     btn.classList.toggle('on', !!on);
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（播放时会自动开）';
+    btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（点章节或「看环壁」会自动开）';
   }
   if (status) showStatus(on ? '环壁已开' : '环壁已关');
 }
@@ -1273,52 +1275,13 @@ function setActiveSegment(id, jump = true) {
   }
 }
 
-const RING_TOUR_IDS = ['a', 'b', 'c', 'd', 'e'];
-const RING_TOUR_DWELL_MS = 1500; // 每段约 1.5s
-let ringTourTimer = null;
-let ringTourPlaying = false;
-
-function setRingPlayUI(playing) {
-  const btn = document.getElementById('btn-ring-play');
-  if (!btn) return;
-  btn.classList.toggle('playing', playing);
-  const ico = btn.querySelector('.ico');
-  const lbl = btn.querySelector('.lbl');
-  if (ico) ico.textContent = playing ? '❚❚' : '▶';
-  if (lbl) lbl.textContent = playing ? '暂停' : '播放环壁';
-  btn.title = playing ? '暂停串播' : '按 A→B→C→D→E 串播环壁（再点暂停）';
-}
-
-function stopRingTour({ status = true } = {}) {
-  ringTourPlaying = false;
-  if (ringTourTimer) {
-    clearTimeout(ringTourTimer);
-    ringTourTimer = null;
-  }
-  setRingPlayUI(false);
-  if (status) showStatus('环壁串播已停');
-}
-
-function playRingTourFrom(startId = 'a') {
+/** 大钮「看环壁」：开环壁 + 对准当前章（无自动串播）。 */
+function viewRingChapter() {
+  const id = (activeSeg && activeSeg !== 'all') ? activeSeg : 'c';
   ensureWallForPlay();
-  let idx = RING_TOUR_IDS.indexOf(startId);
-  if (idx < 0) idx = 0;
-  ringTourPlaying = true;
-  setRingPlayUI(true);
-
-  const step = () => {
-    if (!ringTourPlaying) return;
-    const id = RING_TOUR_IDS[idx];
-    setActiveSegment(id, true);
-    if (idx >= RING_TOUR_IDS.length - 1) {
-      ringTourTimer = setTimeout(() => stopRingTour({ status: true }), RING_TOUR_DWELL_MS);
-      return;
-    }
-    idx += 1;
-    ringTourTimer = setTimeout(step, RING_TOUR_DWELL_MS);
-  };
-  step();
-  showStatus('环壁串播 A→E');
+  setActiveSegment(id, true);
+  const seg = SEGMENTS.find((s) => s.id === id);
+  showStatus(seg ? `看环壁 · ${seg.name}` : '看环壁');
 }
 
 function jumpToChapter(id) {
@@ -1326,8 +1289,7 @@ function jumpToChapter(id) {
     setActiveSegment(id || 'all', true);
     return;
   }
-  // 点章节：开环壁并跳段；若在串播中则停掉以免打架
-  if (ringTourPlaying) stopRingTour({ status: false });
+  // 点章节：开环壁、高亮该章、镜头对准该段环壁画
   ensureWallForPlay();
   setActiveSegment(id, true);
 }
@@ -1358,7 +1320,6 @@ document.getElementById('legend').addEventListener('click', (ev) => {
   if (!btn) return;
   const id = btn.dataset.id;
   if (id === 'all') {
-    if (ringTourPlaying) stopRingTour({ status: false });
     setActiveSegment('all', true);
   } else {
     jumpToChapter(id);
@@ -1377,12 +1338,7 @@ if (ringChapters) {
 const btnRingPlay = document.getElementById('btn-ring-play');
 if (btnRingPlay) {
   btnRingPlay.addEventListener('click', () => {
-    if (ringTourPlaying) stopRingTour();
-    else {
-      // 从当前段开始；若 all 则从 A
-      const start = (activeSeg && activeSeg !== 'all') ? activeSeg : 'a';
-      playRingTourFrom(start);
-    }
+    viewRingChapter();
   });
 }
 
@@ -1477,13 +1433,10 @@ document.getElementById('yuan-opacity').addEventListener('input', (ev) => {
 document.getElementById('btn-wall').addEventListener('click', (ev) => {
   const on = !wallGroup.visible;
   setWallVisible(on);
-  // 手动关环壁时若在串播，一并停
-  if (!on && ringTourPlaying) stopRingTour({ status: false });
 });
 // 播放器初始态：环壁关、章节 C 高亮（与 activeSeg 一致）
 setWallVisible(false, { status: false });
 syncSegmentButtons(activeSeg);
-setRingPlayUI(false);
 
 
 document.getElementById('btn-morph').addEventListener('click', (ev) => {

@@ -291,11 +291,12 @@
     #ring-chapters .ch[data-id="d"]{background:var(--d)}
     #ring-chapters .ch[data-id="e"]{background:var(--e)}
     #ring-chapters .ch.on {
-      opacity:1; transform:scale(1.12);
-      box-shadow:0 0 0 2px rgba(255,255,255,.5), 0 0 10px rgba(110,198,255,.3);
+      opacity:1; transform:scale(1.22);
+      box-shadow:0 0 0 3px #fff, 0 0 14px rgba(110,198,255,.55);
       border-color:transparent;
+      filter:brightness(1.12);
     }
-    #ring-chapters .ch:not(.on) { opacity:.5; }
+    #ring-chapters .ch:not(.on) { opacity:.42; filter:saturate(.7); }
     #ring-chapters .ch:hover { opacity:1; }
     #ring-chapters .ch-label {
       font:10px/1 "PingFang SC",sans-serif; color:var(--muted);
@@ -532,7 +533,7 @@
             <div class="row">
               <button type="button" class="exbtn on" id="btn-morph" title="圆相扭曲对齐今图（默开→星钉今址；关→星移圆相画位）">配准</button>
             </div>
-            <p class="tip" style="margin:0;font-size:10px;color:var(--muted);line-height:1.4">环壁与 A–E 串播在画面下方播放器；点章节或「播放环壁」会自动开环壁。</p>
+            <p class="tip" style="margin:0;font-size:10px;color:var(--muted);line-height:1.4">环壁与 A–E 章节在画面下方：点某一章开环壁并对准该段画；「看环壁」对准当前章。无强制串播。</p>
             <div class="slider-row">
               <label for="explode">图层炸开</label>
               <input id="explode" type="range" min="0" max="40" value="0" />
@@ -575,12 +576,12 @@
     <div id="swipe-line"><div id="swipe-handle" title="拖动分割线">⇔</div></div>
   </div>
 
-  <div id="ring-player" aria-label="环壁播放">
+  <div id="ring-player" aria-label="环壁章节">
     <div class="rp-main">
-      <button type="button" id="btn-wall" title="环壁开关（播放时会自动开）" aria-pressed="false">环</button>
-      <button type="button" id="btn-ring-play" title="按 A→B→C→D→E 串播环壁（再点暂停）">
-        <span class="ico" aria-hidden="true">▶</span>
-        <span class="lbl">播放环壁</span>
+      <button type="button" id="btn-wall" title="环壁开关（点章节或「看环壁」会自动开）" aria-pressed="false">环</button>
+      <button type="button" id="btn-ring-play" title="开环壁并对准当前章节画段">
+        <span class="ico" aria-hidden="true">◎</span>
+        <span class="lbl">看环壁</span>
       </button>
     </div>
     <div id="ring-chapters" role="group" aria-label="环湖章节 A–E">
@@ -593,6 +594,6 @@
     </div>
   </div>
   <canvas id="c"></canvas>
-  <script type="module" src="./main.js?v=ring-ae-20261024"></script>
+  <script type="module" src="./main.js?v=ring-chapter-20261024"></script>
 </body>
 </html>
