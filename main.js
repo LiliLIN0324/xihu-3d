@@ -6,7 +6,7 @@
  * Defaults (2026-10-23 定稿): explode=0, morph ON, wall off, yuan opacity≈55%,
  * places only on active segment, night basemap (default), compare mode 叠合.
  * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁低饱和吃雾。
- * Ring chapters (2026-10-24): A–E 章节点选→开环壁+镜头对准该段画；大钮「看环壁」；无强制串播；切段不改雾/色温。
+ * Ring chapters (2026-10-24): A–E 章节点选→开环壁+展开该段地名（钉在环壁 gx）+镜头对准；大钮「看环壁」；无强制串播；切段不改雾/色温。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -703,7 +703,18 @@ function applyMorph(amount) {
 
 function layoutPlacePins(amount) {
   const a = amount == null ? morphAmount : amount;
+  // 环壁已开且 activeSeg≠all：该段地名钉到环壁对应 gx（可读）；否则仍地板双位置
+  const onRing = !!(wallGroup && wallGroup.visible && activeSeg && activeSeg !== 'all');
   for (const L of placeLabelObjs) {
+    if (onRing && L.seg === activeSeg) {
+      const p = posOnRing(L.pl.gx, WALL_R * 0.88);
+      const y = WALL_H * 0.55;
+      L.obj.position.set(p.x, y, p.z);
+      if (L.dot) L.dot.position.set(p.x, y - 0.08, p.z);
+      if (L.glow) L.glow.position.set(p.x, y - 0.08, p.z);
+      L._wx = p.x; L._wz = p.z;
+      continue;
+    }
     // morph≈0 → 圆相 Freer/FLOOR_UV（画上正确位置）；morph 开 → 今址
     let sx, sz, tx, tz;
     if (L.fu != null) {
@@ -940,6 +951,23 @@ function applyNamesExpanded(on) {
     btn.classList.toggle('on', namesExpanded);
     btn.textContent = '星名';
     btn.title = namesExpanded ? '星名已展开（再点收起）' : '全局展开/收起短名（默认收起）';
+  }
+}
+
+
+/** 该段地名短名列表，≤max 个，超出加「等」 */
+function segmentPlaceShorts(segId, max = 6) {
+  const list = PLACES.filter((p) => p.seg === segId).map((p) => p.short);
+  if (!list.length) return '';
+  if (list.length <= max) return list.join('、');
+  return list.slice(0, max).join('、') + '等';
+}
+
+/** 展开当前 active 段地名短名（不强制收起「全部」） */
+function expandActiveSegmentNames() {
+  if (!activeSeg || activeSeg === 'all') return;
+  for (const L of placeLabelObjs) {
+    if (L.seg === activeSeg) L.el.classList.add('expanded');
   }
 }
 
@@ -1240,6 +1268,7 @@ function setWallVisible(on, { status = true } = {}) {
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（点章节或「看环壁」会自动开）';
   }
+  layoutPlacePins();
   if (status) showStatus(on ? '环壁已开' : '环壁已关');
 }
 
@@ -1251,15 +1280,18 @@ function setActiveSegment(id, jump = true) {
   activeSeg = id;
   syncSegmentButtons(id);
   applySegmentFilter();
+  layoutPlacePins();
   // 切段不改雾/色温（applyMood 仅跟底图样式）
   if (jump && id !== 'all') {
     const seg = SEGMENTS.find((s) => s.id === id);
     if (!seg) return;
+    expandActiveSegmentNames();
     const mid = (Math.max(seg.gxMin, GX_PAINT_MIN) + Math.min(seg.gxMax, GX_PAINT_MAX)) / 2;
     const { cam, target } = cameraForGx(mid, 'segment');
     animateCamera(cam, target, 700);
     flashHighlight(mid, seg.color);
-    showStatus(seg.name);
+    const shorts = segmentPlaceShorts(id);
+    showStatus(shorts ? `${seg.name} · ${shorts}` : seg.name);
   } else if (id === 'all') {
     showStatus('全部扇区 · 淡色图例');
   }
@@ -1271,7 +1303,12 @@ function viewRingChapter() {
   ensureWallForPlay();
   setActiveSegment(id, true);
   const seg = SEGMENTS.find((s) => s.id === id);
-  showStatus(seg ? `看环壁 · ${seg.name}` : '看环壁');
+  const shorts = segmentPlaceShorts(id);
+  if (seg) {
+    showStatus(shorts ? `看环壁 · ${seg.name} · ${shorts}` : `看环壁 · ${seg.name}`);
+  } else {
+    showStatus('看环壁');
+  }
 }
 
 function jumpToChapter(id) {
