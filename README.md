@@ -22,7 +22,8 @@
 - **右贴边窄轨（52px，常驻）**：对照三态「叠合 / 仅今 / 仅圆」·「星点」「星名」「圆相」·收合把手 ☰。
 - **抽屉（约 280px，默认收起）**：环湖段 A–E 色点条、底图、圆相透明度、时间轴+历史透明度、分割对照、试验（环壁/配准/炸开）、说明脚注。
 - **窄屏**：抽屉 overlay；点遮罩或 Esc / 把手收起。左下罗盘、右下版权、底中脚注不动。
-- 版本号：`?v=mood-20261024`（待 UIUX/用户过闸后再传 R2）。
+- 版本号：`?v=ring-ae-20261024`。
+- 环壁入口：画面正中偏下「播放环壁」+ A–E 章节轨（右轨不塞章节；切段不改雾/色温）。
 
 ## 默认态（成熟「历史图叠今图」）
 
@@ -94,7 +95,7 @@ Capabilities 已查：未纳入 Hangzhou_10K_1947（市郊局部）、拱宸桥�
 
 用户定稿 `places-data.js`（2026-10-23）；本页内嵌 PLACES 副本，不改 2D 权威源。
 
-线上：https://pub-3209bcb7fc36444a914deb0e70ceca92.r2.dev/qingqu-scroll-labels/yuanxiang-3d/index.html?v=mood-20261024
+线上：https://pub-3209bcb7fc36444a914deb0e70ceca92.r2.dev/qingqu-scroll-labels/yuanxiang-3d/index.html?v=ring-ae-20261024
 
 
 ## 今址与配准（2026-10-23 用户私聊定稿）

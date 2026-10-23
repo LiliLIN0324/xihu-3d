@@ -6,6 +6,7 @@
  * Defaults (2026-10-23 定稿): explode=0, morph ON, wall off, yuan opacity≈55%,
  * places only on active segment, night basemap (default), compare mode 叠合.
  * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁低饱和吃雾。
+ * Ring player (2026-10-24): 正中偏下「播放环壁」+ A–E 章节轨；右轨不塞章节；切段不改雾/色温。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -1221,9 +1222,11 @@ function focusPlace(pl, el) {
   showStatus(`${pl.short} · ${seg ? seg.name : pl.seg} · ${modeNote} · gx ${pl.gx}${loc}${uvNote}`);
 }
 
-function setActiveSegment(id, jump = true) {
-  activeSeg = id;
+function syncSegmentButtons(id) {
   document.querySelectorAll('#legend .seg').forEach((b) => {
+    b.classList.toggle('on', b.dataset.id === id);
+  });
+  document.querySelectorAll('#ring-chapters .ch').forEach((b) => {
     b.classList.toggle('on', b.dataset.id === id);
   });
   const segNameEl = document.getElementById('seg-name');
@@ -1234,7 +1237,29 @@ function setActiveSegment(id, jump = true) {
       segNameEl.textContent = seg ? seg.name : id;
     }
   }
+}
+
+/** 环壁显隐；同步播放器旁小开关。不改雾/色温。 */
+function setWallVisible(on, { status = true } = {}) {
+  wallGroup.visible = !!on;
+  const btn = document.getElementById('btn-wall');
+  if (btn) {
+    btn.classList.toggle('on', !!on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（播放时会自动开）';
+  }
+  if (status) showStatus(on ? '环壁已开' : '环壁已关');
+}
+
+function ensureWallForPlay() {
+  if (!wallGroup.visible) setWallVisible(true, { status: false });
+}
+
+function setActiveSegment(id, jump = true) {
+  activeSeg = id;
+  syncSegmentButtons(id);
   applySegmentFilter();
+  // 切段不改雾/色温（applyMood 仅跟底图样式）
   if (jump && id !== 'all') {
     const seg = SEGMENTS.find((s) => s.id === id);
     if (!seg) return;
@@ -1246,6 +1271,65 @@ function setActiveSegment(id, jump = true) {
   } else if (id === 'all') {
     showStatus('全部扇区 · 淡色图例');
   }
+}
+
+const RING_TOUR_IDS = ['a', 'b', 'c', 'd', 'e'];
+const RING_TOUR_DWELL_MS = 1500; // 每段约 1.5s
+let ringTourTimer = null;
+let ringTourPlaying = false;
+
+function setRingPlayUI(playing) {
+  const btn = document.getElementById('btn-ring-play');
+  if (!btn) return;
+  btn.classList.toggle('playing', playing);
+  const ico = btn.querySelector('.ico');
+  const lbl = btn.querySelector('.lbl');
+  if (ico) ico.textContent = playing ? '❚❚' : '▶';
+  if (lbl) lbl.textContent = playing ? '暂停' : '播放环壁';
+  btn.title = playing ? '暂停串播' : '按 A→B→C→D→E 串播环壁（再点暂停）';
+}
+
+function stopRingTour({ status = true } = {}) {
+  ringTourPlaying = false;
+  if (ringTourTimer) {
+    clearTimeout(ringTourTimer);
+    ringTourTimer = null;
+  }
+  setRingPlayUI(false);
+  if (status) showStatus('环壁串播已停');
+}
+
+function playRingTourFrom(startId = 'a') {
+  ensureWallForPlay();
+  let idx = RING_TOUR_IDS.indexOf(startId);
+  if (idx < 0) idx = 0;
+  ringTourPlaying = true;
+  setRingPlayUI(true);
+
+  const step = () => {
+    if (!ringTourPlaying) return;
+    const id = RING_TOUR_IDS[idx];
+    setActiveSegment(id, true);
+    if (idx >= RING_TOUR_IDS.length - 1) {
+      ringTourTimer = setTimeout(() => stopRingTour({ status: true }), RING_TOUR_DWELL_MS);
+      return;
+    }
+    idx += 1;
+    ringTourTimer = setTimeout(step, RING_TOUR_DWELL_MS);
+  };
+  step();
+  showStatus('环壁串播 A→E');
+}
+
+function jumpToChapter(id) {
+  if (!id || id === 'all') {
+    setActiveSegment(id || 'all', true);
+    return;
+  }
+  // 点章节：开环壁并跳段；若在串播中则停掉以免打架
+  if (ringTourPlaying) stopRingTour({ status: false });
+  ensureWallForPlay();
+  setActiveSegment(id, true);
 }
 
 function zeroExplodeUI() {
@@ -1272,8 +1356,35 @@ function setMorphUI(on) {
 document.getElementById('legend').addEventListener('click', (ev) => {
   const btn = ev.target.closest('.seg');
   if (!btn) return;
-  setActiveSegment(btn.dataset.id, true);
+  const id = btn.dataset.id;
+  if (id === 'all') {
+    if (ringTourPlaying) stopRingTour({ status: false });
+    setActiveSegment('all', true);
+  } else {
+    jumpToChapter(id);
+  }
 });
+
+const ringChapters = document.getElementById('ring-chapters');
+if (ringChapters) {
+  ringChapters.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.ch');
+    if (!btn) return;
+    jumpToChapter(btn.dataset.id);
+  });
+}
+
+const btnRingPlay = document.getElementById('btn-ring-play');
+if (btnRingPlay) {
+  btnRingPlay.addEventListener('click', () => {
+    if (ringTourPlaying) stopRingTour();
+    else {
+      // 从当前段开始；若 all 则从 A
+      const start = (activeSeg && activeSeg !== 'all') ? activeSeg : 'a';
+      playRingTourFrom(start);
+    }
+  });
+}
 
 document.getElementById('compare-modes').addEventListener('click', (ev) => {
   const btn = ev.target.closest('.mode');
@@ -1364,10 +1475,16 @@ document.getElementById('yuan-opacity').addEventListener('input', (ev) => {
 });
 
 document.getElementById('btn-wall').addEventListener('click', (ev) => {
-  const on = ev.currentTarget.classList.toggle('on');
-  wallGroup.visible = on;
-  showStatus(on ? '环壁已开（试验）' : '环壁已关');
+  const on = !wallGroup.visible;
+  setWallVisible(on);
+  // 手动关环壁时若在串播，一并停
+  if (!on && ringTourPlaying) stopRingTour({ status: false });
 });
+// 播放器初始态：环壁关、章节 C 高亮（与 activeSeg 一致）
+setWallVisible(false, { status: false });
+syncSegmentButtons(activeSeg);
+setRingPlayUI(false);
+
 
 document.getElementById('btn-morph').addEventListener('click', (ev) => {
   const on = ev.currentTarget.classList.toggle('on');
