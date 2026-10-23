@@ -8,6 +8,9 @@
  * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁开时 readable（近白/不吃雾）以便看清画。
  * Ring chapters (2026-10-24): A–E 章节点选→开环壁+展开该段地名（钉在环壁 gx）+镜头对准；大钮「看环壁」；无强制串播；切段不改雾/色温。
  * Ring paint (2026-10-24): 开环壁→贴图可读（白滤/高不透明/fog off）；色带压淡；章节镜头略拉近。
+ * Showcase (2026-10-24): ▶ 吸引环定镜一圈 ~46s（开场 C 3s → A–E 各 6s 环壁 + 2s 今图/圆相插镜 → 收束全景 3s，循环）。
+ *   环壁镜只用 cameraForGx(gx,'segment')；段内不跟点拧。镜间短缓推。不调 applyMood、不用仅圆相。弧 α=0.4。
+ * Wall leaders (2026-10-24b): 环壁开 → 当前章每条地名一条轻弧（墙钉→今址，morph 关则画位）。关环壁收全部。无 Bloom。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -17,6 +20,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 
 const SEGMENTS = [
   { id: 'a', name: 'A 钱塘门区', color: '#e07a5f', gxMin: 26214, gxMax: 30583 },
@@ -411,6 +417,7 @@ function applyMood(style) {
   hemi.color.setHex(night ? 0x6a8490 : 0xb8c8d0);
   hemi.groundColor.setHex(night ? 0x1a221c : 0x2a3228);
   hemi.intensity = night ? 0.16 : 0.22;
+  syncLeaderColor();
 }
 
 const placesGroup = new THREE.Group();
@@ -420,6 +427,50 @@ scene.add(yuanGroup);
 const wallGroup = new THREE.Group();
 wallGroup.visible = false; // default: 环壁关
 scene.add(wallGroup);
+
+/** 引线：环壁开时当前章每条一条。透明度锁在 0.4，禁止再抬、禁止 Additive/Bloom。不改相机。 */
+const LEADER_ALPHA = 0.4;
+const LEADER_COLOR_DAY = 0x66835d; // #66835D 日间/街道/卫星
+const LEADER_COLOR_NIGHT = 0xa8c4a0; // #A8C4A0 夜间底图
+const LEADER_DOT_PX = 6;
+const LEADER_SAMPLES = 28;
+const leaderItems = new Map(); // place id → { line, mat, dots, curve, buf }
+const leaderNarrowMql = window.matchMedia('(max-width: 720px)');
+
+function makeLeaderDotTexture() {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, 64, 64);
+  g.fillStyle = '#ffffff';
+  g.beginPath();
+  g.arc(32, 32, 30, 0, Math.PI * 2);
+  g.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const leaderDotTex = makeLeaderDotTexture();
+function makeLeaderDot() {
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: leaderDotTex,
+    color: LEADER_COLOR_NIGHT,
+    transparent: true,
+    opacity: LEADER_ALPHA,
+    depthWrite: false,
+    depthTest: true,
+    fog: false,
+    toneMapped: false,
+    blending: THREE.NormalBlending,
+    sizeAttenuation: true,
+  }));
+  spr.visible = false;
+  spr.renderOrder = 5;
+  spr.frustumCulled = false;
+  scene.add(spr);
+  return spr;
+}
 
 let basemapMesh = null;
 let histMesh = null;
@@ -442,6 +493,15 @@ let placesVisible = true;
 let namesExpanded = false; // 默认收起：只留星点；全局/单击展开短名
 let compareMode = 'overlay'; // overlay | modern | yuanxiang | swipe
 let activeSeg = 'c'; // single-select A–E (center player only)
+let showcaseTimer = 0;
+let showcaseNameTimer = 0;
+let showcasePlaying = false;
+let showcasePaused = false;
+let showcaseBeat = -1;
+let showcaseBeatStart = 0;
+let showcaseBeatMs = 0;
+let showcaseNameIndex = 0;
+let showcaseSavedCompare = null;
 const basemapTextures = {};
 let currentStyle = 'night';
 const histTextures = {};
@@ -703,11 +763,42 @@ function applyMorph(amount) {
   layoutPlacePins(amount);
 }
 
+/** 地板锚点：morph 开 → 今址；morph 关 → Freer/FLOOR_UV；都没有则 gx 环估。与星钉同一套插值。 */
+function floorPinXZ(L, amount) {
+  const a = amount == null ? morphAmount : amount;
+  let sx = null;
+  let sz = null;
+  let tx = null;
+  let tz = null;
+  if (L.fu != null) {
+    const sw = freerToWorld(L.fu, L.fv, L.baseY);
+    sx = sw.x; sz = sw.z;
+  } else if (L.estX != null) {
+    sx = L.estX; sz = L.estZ;
+  }
+  if (L.lat != null && L.lng != null) {
+    const w = lngLatToWorld(L.lng, L.lat, L.baseY);
+    tx = w.x; tz = w.z;
+  } else if (L.fu != null) {
+    const mapped = warpFreerToMapUV(L.fu, L.fv);
+    const tw = mapUVToWorld(mapped.u, mapped.v, L.baseY);
+    tx = tw.x; tz = tw.z;
+  } else if (L.estX != null) {
+    tx = L.estX; tz = L.estZ;
+  } else {
+    return null;
+  }
+  if (sx == null) { sx = tx; sz = tz; }
+  return { x: sx + (tx - sx) * a, z: sz + (tz - sz) * a };
+}
+
 function layoutPlacePins(amount) {
   const a = amount == null ? morphAmount : amount;
   // 环壁已开且 activeSeg≠all：该段地名钉到环壁对应 gx（可读）；否则仍地板双位置
   const onRing = !!(wallGroup && wallGroup.visible && activeSeg && activeSeg !== 'all');
   for (const L of placeLabelObjs) {
+    const floor = floorPinXZ(L, a);
+    if (floor) { L._fx = floor.x; L._fz = floor.z; }
     if (onRing && L.seg === activeSeg) {
       const p = posOnRing(L.pl.gx, WALL_R * 0.88);
       const y = WALL_H * 0.55;
@@ -717,35 +808,168 @@ function layoutPlacePins(amount) {
       L._wx = p.x; L._wz = p.z;
       continue;
     }
-    // morph≈0 → 圆相 Freer/FLOOR_UV（画上正确位置）；morph 开 → 今址
-    let sx, sz, tx, tz;
-    if (L.fu != null) {
-      const sw = freerToWorld(L.fu, L.fv, L.baseY);
-      sx = sw.x; sz = sw.z;
-    } else if (L.estX != null) {
-      sx = L.estX; sz = L.estZ;
-    } else {
-      sx = null; sz = null;
+    if (!floor) continue;
+    L.obj.position.set(floor.x, L.baseY, floor.z);
+    if (L.dot) L.dot.position.set(floor.x, 0.06, floor.z);
+    if (L.glow) L.glow.position.set(floor.x, 0.06, floor.z);
+    L._wx = floor.x; L._wz = floor.z;
+  }
+}
+
+function placeShownOnRing(L) {
+  return !!(
+    L &&
+    wallGroup.visible &&
+    placesVisible &&
+    activeSeg &&
+    activeSeg !== 'all' &&
+    L.seg === activeSeg &&
+    L.el &&
+    L.el.style.display !== 'none'
+  );
+}
+
+/** 墙端 = 环壁钉（placesGroup 世界坐标）；地图端 = 地板今址/画位，不跟炸开抬起。 */
+function endpointsForLabel(L, outWall, outMap) {
+  const floor = floorPinXZ(L, morphAmount);
+  if (!floor) return false;
+  placesGroup.updateWorldMatrix(true, false);
+  if (L.dot) outWall.copy(L.dot.position);
+  else {
+    const p = posOnRing(L.pl.gx, WALL_R * 0.88);
+    outWall.set(p.x, WALL_H * 0.55, p.z);
+  }
+  placesGroup.localToWorld(outWall);
+  outMap.set(floor.x, 0.14, floor.z);
+  return true;
+}
+
+/**
+ * 二次贝塞尔控制点：抬高，并略向场景中心收。
+ * 曲线中点约在弦线上方 lift/2，避免直线穿地图。
+ */
+function leaderControlPoint(wall, map, target) {
+  const midX = (wall.x + map.x) * 0.5;
+  const midZ = (wall.z + map.z) * 0.5;
+  const chordMidY = (wall.y + map.y) * 0.5;
+  const chordLen = Math.hypot(wall.x - map.x, wall.y - map.y, wall.z - map.z);
+  const lift = Math.max(1.35, Math.min(2.4, chordLen * 0.18));
+  const inward = 0.2;
+  target.set(midX * (1 - inward), chordMidY + lift, midZ * (1 - inward));
+  return target;
+}
+
+function leaderColorHex() {
+  return currentStyle === 'night' ? LEADER_COLOR_NIGHT : LEADER_COLOR_DAY;
+}
+
+function syncLeaderColor() {
+  const hex = leaderColorHex();
+  for (const it of leaderItems.values()) {
+    it.mat.color.setHex(hex);
+    it.dotW.material.color.setHex(hex);
+    it.dotM.material.color.setHex(hex);
+  }
+}
+
+function worldSizeForPx(px, point) {
+  const dist = Math.max(0.5, camera.position.distanceTo(point));
+  const h = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * dist;
+  const viewH = renderer.domElement.clientHeight || window.innerHeight || 1;
+  return h * (px / viewH);
+}
+
+function makeLeaderItem() {
+  const buf = new Float32Array((LEADER_SAMPLES + 1) * 3);
+  const geo = new LineGeometry();
+  geo.setPositions(buf);
+  const mat = new LineMaterial({
+    color: leaderColorHex(),
+    linewidth: leaderNarrowMql.matches ? 2 : 1.5,
+    worldUnits: false,
+    transparent: true,
+    opacity: LEADER_ALPHA,
+    depthWrite: false,
+    depthTest: true,
+    fog: false,
+    toneMapped: false,
+    blending: THREE.NormalBlending,
+  });
+  mat.resolution.set(innerWidth, innerHeight);
+  const line = new Line2(geo, mat);
+  line.frustumCulled = false;
+  line.visible = false;
+  line.renderOrder = 4;
+  scene.add(line);
+  const dotW = makeLeaderDot();
+  const dotM = makeLeaderDot();
+  dotW.material.color.setHex(leaderColorHex());
+  dotM.material.color.setHex(leaderColorHex());
+  return {
+    buf, geo, mat, line, dotW, dotM,
+    curve: new THREE.QuadraticBezierCurve3(
+      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(),
+    ),
+    wall: new THREE.Vector3(),
+    map: new THREE.Vector3(),
+    ctrl: new THREE.Vector3(),
+  };
+}
+
+function hideLeaderItem(it) {
+  it.line.visible = false;
+  it.dotW.visible = false;
+  it.dotM.visible = false;
+}
+
+/** 环壁开：当前章每条可见地名一条弧。关环壁或换章后，不在章内的线全部收起。 */
+function updateLeaders() {
+  const linewidth = leaderNarrowMql.matches ? 2 : 1.5;
+  const rw = renderer.domElement.clientWidth || window.innerWidth;
+  const rh = renderer.domElement.clientHeight || window.innerHeight;
+  const want = new Set();
+  if (wallGroup.visible && placesVisible && activeSeg && activeSeg !== 'all') {
+    for (const L of placeLabelObjs) {
+      if (!placeShownOnRing(L)) continue;
+      let it = leaderItems.get(L.pl.id);
+      if (!it) {
+        it = makeLeaderItem();
+        leaderItems.set(L.pl.id, it);
+      }
+      if (!endpointsForLabel(L, it.wall, it.map)) {
+        hideLeaderItem(it);
+        continue;
+      }
+      want.add(L.pl.id);
+      leaderControlPoint(it.wall, it.map, it.ctrl);
+      it.curve.v0.copy(it.wall);
+      it.curve.v1.copy(it.ctrl);
+      it.curve.v2.copy(it.map);
+      const pts = it.curve.getPoints(LEADER_SAMPLES);
+      for (let i = 0; i < pts.length; i++) {
+        it.buf[i * 3] = pts[i].x;
+        it.buf[i * 3 + 1] = pts[i].y;
+        it.buf[i * 3 + 2] = pts[i].z;
+      }
+      it.geo.setPositions(it.buf);
+      it.mat.linewidth = linewidth;
+      it.mat.resolution.set(rw, rh);
+      it.mat.opacity = LEADER_ALPHA;
+      it.line.visible = true;
+      const sW = worldSizeForPx(LEADER_DOT_PX, it.wall);
+      const sM = worldSizeForPx(LEADER_DOT_PX, it.map);
+      it.dotW.position.copy(it.wall);
+      it.dotM.position.copy(it.map);
+      it.dotW.scale.set(sW, sW, 1);
+      it.dotM.scale.set(sM, sM, 1);
+      it.dotW.material.opacity = LEADER_ALPHA;
+      it.dotM.material.opacity = LEADER_ALPHA;
+      it.dotW.visible = true;
+      it.dotM.visible = true;
     }
-    if (L.lat != null && L.lng != null) {
-      const w = lngLatToWorld(L.lng, L.lat, L.baseY);
-      tx = w.x; tz = w.z;
-    } else if (L.fu != null) {
-      const mapped = warpFreerToMapUV(L.fu, L.fv);
-      const tw = mapUVToWorld(mapped.u, mapped.v, L.baseY);
-      tx = tw.x; tz = tw.z;
-    } else if (L.estX != null) {
-      tx = L.estX; tz = L.estZ;
-    } else {
-      continue;
-    }
-    if (sx == null) { sx = tx; sz = tz; }
-    const x = sx + (tx - sx) * a;
-    const z = sz + (tz - sz) * a;
-    L.obj.position.set(x, L.baseY, z);
-    if (L.dot) L.dot.position.set(x, 0.06, z);
-    if (L.glow) L.glow.position.set(x, 0.06, z);
-    L._wx = x; L._wz = z;
+  }
+  for (const [id, it] of leaderItems) {
+    if (!want.has(id)) hideLeaderItem(it);
   }
 }
 
@@ -892,7 +1116,8 @@ function makePlaceLabels() {
       `<span class="badge">${pl.seg.toUpperCase()}</span>`;
     el.addEventListener('pointerdown', (ev) => {
       ev.stopPropagation(); ev.preventDefault();
-      // 单击：展开该星名（若全局已展开则保持），并聚焦
+      // 播中点地名：暂停并停在该点（镜头仍是 ring-paint focusPlace）
+      if (showcasePlaying) pauseShowcase({ status: false });
       if (!namesExpanded) {
         el.classList.toggle('expanded');
       } else {
@@ -978,6 +1203,8 @@ function applySegmentFilter() {
   const allFaint = activeSeg === 'all';
   for (const L of placeLabelObjs) {
     const active = allFaint || L.seg === activeSeg;
+    // CSS2DRenderer 每帧按 object.visible 改写 style.display，只改 style 挡不住其它章地名
+    if (L.obj) L.obj.visible = active;
     if (allFaint) {
       L.el.classList.add('dim');
       L.el.style.display = '';
@@ -1296,6 +1523,8 @@ function setWallVisible(on, { status = true } = {}) {
     btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（点章节或「看环壁」会自动开）';
   }
   layoutPlacePins();
+  // 播中手动关环壁：先暂停，避免下一镜立刻再打开
+  if (!on && showcasePlaying) pauseShowcase({ status: false });
   if (status) showStatus(on ? '环壁已开 · 可贴壁看画' : '环壁已关');
 }
 
@@ -1324,6 +1553,249 @@ function setActiveSegment(id, jump = true) {
   }
 }
 
+/** 该章地名按 gx 递减（卷右→左），只用于轮流点亮，不驱动镜头。 */
+function placesForPlay(segId) {
+  return PLACES.filter((p) => p.seg === segId).slice().sort((a, b) => b.gx - a.gx);
+}
+
+function segmentMidGx(id) {
+  const seg = SEGMENTS.find((s) => s.id === id);
+  if (!seg) return (GX_PAINT_MIN + GX_PAINT_MAX) / 2;
+  return (Math.max(seg.gxMin, GX_PAINT_MIN) + Math.min(seg.gxMax, GX_PAINT_MAX)) / 2;
+}
+
+/**
+ * 今图 / 圆相插镜：与环壁同方位略拉开，看见底图和弧。
+ * 不是 cameraForGx，也不跟单个地名拧。
+ */
+function cameraForFloorInsert(gx) {
+  const a = alphaFromGx(gx);
+  const rCam = WALL_R * 1.35;
+  const rTgt = WALL_R * 0.35;
+  return {
+    cam: new THREE.Vector3(rCam * Math.cos(a), 7.2, -rCam * Math.sin(a)),
+    target: new THREE.Vector3(rTgt * Math.cos(a), 0.6, -rTgt * Math.sin(a)),
+  };
+}
+
+/** 开场 3s + A–E 各 6s 环壁 + 2s 插镜 + 收束 3s = 46s。偶章今图、奇章圆相。 */
+const SHOWCASE_OPEN_MS = 3000;
+const SHOWCASE_CHAPTER_MS = 6000;
+const SHOWCASE_INSERT_MS = 2000;
+const SHOWCASE_CLOSE_MS = 3000;
+const SHOWCASE_NAME_MS = 750;
+const SHOWCASE_BEATS = [
+  { kind: 'open', seg: 'c', ms: SHOWCASE_OPEN_MS, shot: 'wall' },
+];
+['a', 'b', 'c', 'd', 'e'].forEach((seg, i) => {
+  SHOWCASE_BEATS.push({ kind: 'chapter', seg, ms: SHOWCASE_CHAPTER_MS, shot: 'wall' });
+  SHOWCASE_BEATS.push({
+    kind: 'insert',
+    seg,
+    ms: SHOWCASE_INSERT_MS,
+    shot: i % 2 === 0 ? 'map' : 'yuan',
+  });
+});
+SHOWCASE_BEATS.push({ kind: 'close', seg: 'e', ms: SHOWCASE_CLOSE_MS, shot: 'pano' });
+
+function syncPlacePlayButton() {
+  const btn = document.getElementById('btn-place-play');
+  if (!btn) return;
+  const ico = btn.querySelector('.ico');
+  const lbl = btn.querySelector('.lbl');
+  btn.classList.toggle('playing', showcasePlaying);
+  btn.setAttribute('aria-pressed', showcasePlaying ? 'true' : 'false');
+  if (ico) ico.textContent = showcasePlaying ? '⏸' : '▶';
+  if (lbl) lbl.textContent = showcasePlaying ? '暂停' : (showcasePaused ? '继续' : '播放');
+  btn.title = showcasePlaying
+    ? '暂停吸引环'
+    : (showcasePaused ? '继续吸引环' : '播放吸引环：A→E 定镜一圈，再点暂停');
+}
+
+function clearShowcaseNameTimer() {
+  if (showcaseNameTimer) {
+    clearTimeout(showcaseNameTimer);
+    showcaseNameTimer = 0;
+  }
+}
+
+function clearShowcaseTimers() {
+  if (showcaseTimer) {
+    clearTimeout(showcaseTimer);
+    showcaseTimer = 0;
+  }
+  clearShowcaseNameTimer();
+}
+
+/** 插镜只切叠合/仅今，不进仅圆相，也不动雾和色温。 */
+function showcaseCompare(mode) {
+  if (mode !== 'overlay' && mode !== 'modern') return;
+  if (compareMode === mode) return;
+  applyCompareMode(mode);
+}
+
+function pulseShowcaseName(seg) {
+  const list = placesForPlay(seg);
+  if (!list.length) return;
+  const pl = list[showcaseNameIndex % list.length];
+  showcaseNameIndex += 1;
+  for (const L of placeLabelObjs) {
+    if (L.seg !== seg) {
+      L.el.classList.remove('active');
+      continue;
+    }
+    const on = L.pl.id === pl.id;
+    if (namesExpanded) L.el.classList.add('expanded');
+    else L.el.classList.toggle('expanded', on);
+    L.el.classList.toggle('active', on);
+    if (on) activeLabelEl = L.el;
+  }
+}
+
+function scheduleShowcaseNames(seg) {
+  clearShowcaseNameTimer();
+  const tick = () => {
+    if (!showcasePlaying) return;
+    const beat = SHOWCASE_BEATS[showcaseBeat];
+    if (!beat || beat.kind !== 'chapter' || beat.seg !== seg) return;
+    pulseShowcaseName(seg);
+    showcaseNameTimer = setTimeout(tick, SHOWCASE_NAME_MS);
+  };
+  showcaseNameTimer = setTimeout(tick, SHOWCASE_NAME_MS);
+}
+
+function clearShowcaseNameActive() {
+  clearShowcaseNameTimer();
+  for (const L of placeLabelObjs) L.el.classList.remove('active');
+  activeLabelEl = null;
+}
+
+function showcaseBeatStatus(beat) {
+  const seg = SEGMENTS.find((s) => s.id === beat.seg);
+  const name = seg ? seg.name : (beat.seg || '').toUpperCase();
+  if (beat.kind === 'open') return `吸引环 · 开场 · ${name}`;
+  if (beat.kind === 'close') return '吸引环 · 收束';
+  if (beat.shot === 'map') return `吸引环 · ${name} · 今图`;
+  if (beat.shot === 'yuan') return `吸引环 · ${name} · 圆相`;
+  return `吸引环 · ${name} · 环壁`;
+}
+
+function applyShowcaseShot(beat) {
+  const gx = segmentMidGx(beat.seg);
+  if (beat.shot === 'wall') {
+    const { cam, target } = cameraForGx(gx, 'segment');
+    animateCamera(cam, target, 850);
+    return;
+  }
+  if (beat.shot === 'map' || beat.shot === 'yuan') {
+    const pose = cameraForFloorInsert(gx);
+    animateCamera(pose.cam, pose.target, 700);
+    return;
+  }
+  // 收束：开场那幅全景定镜，不新造环游
+  animateCamera(
+    new THREE.Vector3(-14, 18, -16),
+    new THREE.Vector3(0, 1.2, 0),
+    1100
+  );
+}
+
+function enterShowcaseBeat(index, remainMs = 0) {
+  const beat = SHOWCASE_BEATS[index];
+  if (!beat) return;
+  clearShowcaseTimers();
+  showcaseBeat = index;
+  const hold = remainMs > 0 ? remainMs : beat.ms;
+  showcaseBeatMs = hold;
+  showcaseBeatStart = performance.now();
+
+  ensureWallForPlay();
+  if (activeSeg !== beat.seg) setActiveSegment(beat.seg, false);
+
+  if (beat.shot === 'map') showcaseCompare('modern');
+  else showcaseCompare('overlay');
+
+  applyShowcaseShot(beat);
+
+  if (beat.kind === 'chapter') {
+    showcaseNameIndex = 0;
+    pulseShowcaseName(beat.seg);
+    scheduleShowcaseNames(beat.seg);
+  } else {
+    clearShowcaseNameActive();
+    expandActiveSegmentNames();
+  }
+
+  showStatus(showcaseBeatStatus(beat));
+  if (showcasePlaying) {
+    showcaseTimer = setTimeout(advanceShowcase, hold);
+  }
+}
+
+function advanceShowcase() {
+  showcaseTimer = 0;
+  if (!showcasePlaying) return;
+  const next = (showcaseBeat + 1) % SHOWCASE_BEATS.length;
+  enterShowcaseBeat(next);
+}
+
+function pauseShowcase({ status = false } = {}) {
+  if (!showcasePlaying) return;
+  const elapsed = performance.now() - showcaseBeatStart;
+  const remain = Math.max(200, showcaseBeatMs - elapsed);
+  clearShowcaseTimers();
+  showcasePlaying = false;
+  showcasePaused = true;
+  showcaseBeatMs = remain;
+  syncPlacePlayButton();
+  if (status) showStatus('已暂停');
+}
+
+function resumeShowcase() {
+  if (!showcasePaused || showcaseBeat < 0) return;
+  showcasePaused = false;
+  showcasePlaying = true;
+  syncPlacePlayButton();
+  enterShowcaseBeat(showcaseBeat, showcaseBeatMs);
+}
+
+/** 看环壁 / 非播中点章：退出轮播。仅在离开轮播时恢复进入前的对照。 */
+function stopShowcase({ restore = false } = {}) {
+  clearShowcaseTimers();
+  showcasePlaying = false;
+  showcasePaused = false;
+  showcaseBeat = -1;
+  showcaseBeatMs = 0;
+  clearShowcaseNameActive();
+  const saved = showcaseSavedCompare;
+  showcaseSavedCompare = null;
+  syncPlacePlayButton();
+  if (restore && saved && saved !== compareMode && saved !== 'yuanxiang') {
+    applyCompareMode(saved);
+  } else if (restore && saved === 'yuanxiang') {
+    applyCompareMode('overlay');
+  }
+}
+
+function toggleShowcase() {
+  if (showcasePlaying) {
+    pauseShowcase({ status: true });
+    return;
+  }
+  if (showcasePaused) {
+    resumeShowcase();
+    return;
+  }
+  showcaseSavedCompare = compareMode;
+  if (compareMode === 'yuanxiang' || compareMode === 'swipe') {
+    applyCompareMode('overlay');
+  }
+  showcasePlaying = true;
+  showcasePaused = false;
+  syncPlacePlayButton();
+  enterShowcaseBeat(0);
+}
+
 /** 大钮「看环壁」：开环壁 + 对准当前章（无自动串播）。 */
 function viewRingChapter() {
   const id = (activeSeg && activeSeg !== 'all') ? activeSeg : 'c';
@@ -1339,11 +1811,19 @@ function viewRingChapter() {
 }
 
 function jumpToChapter(id) {
+  // 播中点章：跳到该章环壁定镜，继续播
+  if (showcasePlaying && id && id !== 'all') {
+    const idx = SHOWCASE_BEATS.findIndex((b) => b.kind === 'chapter' && b.seg === id);
+    if (idx >= 0) {
+      enterShowcaseBeat(idx);
+      return;
+    }
+  }
+  stopShowcase({ restore: true });
   if (!id || id === 'all') {
     setActiveSegment(id || 'all', true);
     return;
   }
-  // 点章节：开环壁、高亮该章、镜头对准该段环壁画
   ensureWallForPlay();
   setActiveSegment(id, true);
 }
@@ -1381,9 +1861,18 @@ if (ringChapters) {
 const btnRingPlay = document.getElementById('btn-ring-play');
 if (btnRingPlay) {
   btnRingPlay.addEventListener('click', () => {
+    stopShowcase({ restore: true });
     viewRingChapter();
   });
 }
+
+const btnPlacePlay = document.getElementById('btn-place-play');
+if (btnPlacePlay) {
+  btnPlacePlay.addEventListener('click', () => {
+    toggleShowcase();
+  });
+}
+syncPlacePlayButton();
 
 document.getElementById('compare-modes').addEventListener('click', (ev) => {
   const btn = ev.target.closest('.mode');
@@ -1605,6 +2094,7 @@ async function main() {
         highlightMesh.material.opacity = 0.85 * (left / 600);
       }
     }
+    updateLeaders();
     if (compareMode === 'swipe' && currentHistYear !== 'now' && histMesh) {
       renderSwipeFrame();
     } else {

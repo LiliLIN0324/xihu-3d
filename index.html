@@ -224,23 +224,37 @@
       box-shadow:0 0 0 1px rgba(110,198,255,.3);
     }
     #btn-wall:hover { color:#fff; border-color:rgba(255,255,255,.35); }
-    #btn-ring-play {
+    #btn-place-play {
       appearance:none; cursor:pointer; border:0;
-      height:40px; min-width:132px; padding:0 18px 0 14px;
+      height:40px; min-width:108px; padding:0 16px 0 12px;
       border-radius:999px;
       background:linear-gradient(135deg,#3a7a9a,#1e5470);
       color:#fff; font:600 14px/1 "PingFang SC","Noto Sans SC",sans-serif;
       letter-spacing:.04em;
-      display:inline-flex; align-items:center; justify-content:center; gap:8px;
+      display:inline-flex; align-items:center; justify-content:center; gap:7px;
       box-shadow:0 2px 12px rgba(40,100,140,.45);
       transition:transform .12s, filter .12s, background .12s;
+      flex:0 0 auto;
     }
-    #btn-ring-play:hover { filter:brightness(1.08); transform:translateY(-1px); }
-    #btn-ring-play.playing {
+    #btn-place-play:hover { filter:brightness(1.08); transform:translateY(-1px); }
+    #btn-place-play.playing {
       background:linear-gradient(135deg,#8a5a3a,#5a3820);
       box-shadow:0 2px 12px rgba(120,70,30,.4);
     }
-    #btn-ring-play .ico { font-size:13px; line-height:1; }
+    #btn-place-play .ico { font-size:13px; line-height:1; }
+    #btn-ring-play {
+      appearance:none; cursor:pointer; border:1px solid rgba(255,255,255,.18);
+      height:36px; min-width:88px; padding:0 12px 0 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      color:#ddd; font:500 12px/1 "PingFang SC","Noto Sans SC",sans-serif;
+      letter-spacing:.02em;
+      display:inline-flex; align-items:center; justify-content:center; gap:6px;
+      transition:transform .12s, filter .12s, background .12s, border-color .12s, color .12s;
+      flex:0 0 auto;
+    }
+    #btn-ring-play:hover { filter:brightness(1.08); color:#fff; border-color:rgba(255,255,255,.35); }
+    #btn-ring-play .ico { font-size:12px; line-height:1; }
     #ring-chapters {
       display:flex; align-items:center; gap:6px;
       background:rgba(14,16,22,.72); backdrop-filter:blur(10px);
@@ -398,7 +412,8 @@
         max-width:min(var(--drawer-w), calc(100vw - var(--rail-w) - 8px));
       }
       #ring-player { bottom:38px; }
-      #btn-ring-play { min-width:112px; height:36px; font-size:13px; padding:0 14px 0 12px; }
+      #btn-place-play { min-width:92px; height:34px; font-size:13px; padding:0 12px 0 10px; }
+      #btn-ring-play { min-width:72px; height:32px; font-size:11px; padding:0 10px 0 8px; }
       #ring-chapters .ch { width:26px; height:26px; font-size:11px; }
       #status { bottom:108px; }
     }
@@ -490,7 +505,7 @@
             <div class="row">
               <button type="button" class="exbtn on" id="btn-morph" title="圆相扭曲对齐今图（默开→星钉今址；关→星移圆相画位）">配准</button>
             </div>
-            <p class="tip" style="margin:0;font-size:10px;color:var(--muted);line-height:1.4">环壁与 A–E 章节在画面下方：点某一章开环壁并对准该段画；「看环壁」对准当前章。无强制串播。</p>
+            <p class="tip" style="margin:0;font-size:10px;color:var(--muted);line-height:1.4">环壁与 A–E 在画面下方。「播放」是吸引环定镜一圈（开场 C，再 A→E：环壁约 6 秒，章末 2 秒今图或圆相，收束全景）；再点暂停，暂停后再点继续。播中点章跳到该章；点地名则暂停并停在该点。「看环壁」退出轮播、对准当前章。环壁开时当前章每条地名一条引线；关环壁则收起。</p>
             <div class="slider-row">
               <label for="explode">图层炸开</label>
               <input id="explode" type="range" min="0" max="40" value="0" />
@@ -533,9 +548,13 @@
     <div id="swipe-line"><div id="swipe-handle" title="拖动分割线">⇔</div></div>
   </div>
 
-  <div id="ring-player" aria-label="环壁章节">
+  <div id="ring-player" aria-label="环壁章节与地名播放">
     <div class="rp-main">
       <button type="button" id="btn-wall" title="环壁开关（点章节或「看环壁」会自动开）" aria-pressed="false">环</button>
+      <button type="button" id="btn-place-play" title="播放吸引环：A→E 定镜一圈，再点暂停" aria-pressed="false">
+        <span class="ico" aria-hidden="true">▶</span>
+        <span class="lbl">播放</span>
+      </button>
       <button type="button" id="btn-ring-play" title="开环壁并对准当前章节画段">
         <span class="ico" aria-hidden="true">◎</span>
         <span class="lbl">看环壁</span>
@@ -551,6 +570,6 @@
     </div>
   </div>
   <canvas id="c"></canvas>
-  <script type="module" src="./main.js?v=ring-paint-20261024"></script>
+  <script type="module" src="./main.js?v=showcase-20261024"></script>
 </body>
 </html>
