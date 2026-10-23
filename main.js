@@ -5,6 +5,7 @@
  * morph 开钉今址 lat/lng。圆相默认 TPS morph 贴今湖。
  * Defaults (2026-10-23 定稿): explode=0, morph ON, wall off, yuan opacity≈55%,
  * places only on active segment, night basemap (default), compare mode 叠合.
+ * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁低饱和吃雾。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -349,8 +350,9 @@ Object.assign(labelRenderer.domElement.style, {
 document.body.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0e1014);
-scene.fog = new THREE.Fog(0x0e1014, 55, 95);
+// 默认湖雾氛围（晨雾色温）；底图样式再经 applyMood 微调
+scene.background = new THREE.Color(0x1e2c30);
+scene.fog = new THREE.Fog(0x1e2c30, 32, 78);
 
 const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.1, 200);
 camera.position.set(-14, 18, -16);
@@ -364,10 +366,11 @@ controls.maxDistance = 70;
 controls.minPolarAngle = 0.12;
 controls.maxPolarAngle = Math.PI * 0.48;
 
-const amb = new THREE.AmbientLight(0xfff6ea, 0.55);
+// 晨雾：主光略暖、补光略青；整体压对比、少高光
+const amb = new THREE.AmbientLight(0xe8efe8, 0.48);
 scene.add(amb);
-const sun = new THREE.DirectionalLight(0xffe6c8, 1.05);
-sun.position.set(12, 28, 8);
+const sun = new THREE.DirectionalLight(0xffd7b0, 0.78);
+sun.position.set(10, 22, 6);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.camera.near = 2;
@@ -377,11 +380,36 @@ sun.shadow.camera.right = 30;
 sun.shadow.camera.top = 30;
 sun.shadow.camera.bottom = -30;
 scene.add(sun);
-const fill = new THREE.DirectionalLight(0x88aadd, 0.35);
-fill.position.set(-10, 12, -8);
+const fill = new THREE.DirectionalLight(0x7eb0c4, 0.32);
+fill.position.set(-12, 10, -6);
 scene.add(fill);
-const hemi = new THREE.HemisphereLight(0x9bb8ff, 0x1a1814, 0.25);
+const hemi = new THREE.HemisphereLight(0xb8c8d0, 0x2a3228, 0.22);
 scene.add(hemi);
+
+/** 湖雾氛围：按底图样式改雾色/背景/光强；近距拉长保中间地名区清晰 */
+function applyMood(style) {
+  const night = style === 'night';
+  const sat = style === 'satellite';
+  // 白天/街道：青灰米青湖雾；夜间：同色相压亮度（深青灰，禁太空黑）
+  const fogCol = night ? 0x1e2c30 : sat ? 0xb0c0c6 : 0xc4d0d4;
+  const bgCol = night ? 0x162226 : sat ? 0xa8b8c0 : 0xb8c6cc;
+  scene.background.setHex(bgCol);
+  if (scene.fog) {
+    scene.fog.color.setHex(fogCol);
+    // 近距拉长、远距稍近 → 圆相/星点区少糊，远景收进湖雾
+    scene.fog.near = night ? 30 : 34;
+    scene.fog.far = night ? 76 : 82;
+  }
+  amb.color.setHex(night ? 0xd0d8d6 : 0xe8efe8);
+  amb.intensity = night ? 0.38 : 0.50;
+  sun.color.setHex(night ? 0xe8c9a0 : 0xffd7b0);
+  sun.intensity = night ? 0.48 : sat ? 0.70 : 0.82;
+  fill.color.setHex(night ? 0x5a8a9c : 0x7eb0c4);
+  fill.intensity = night ? 0.22 : 0.34;
+  hemi.color.setHex(night ? 0x6a8490 : 0xb8c8d0);
+  hemi.groundColor.setHex(night ? 0x1a221c : 0x2a3228);
+  hemi.intensity = night ? 0.16 : 0.22;
+}
 
 const placesGroup = new THREE.Group();
 scene.add(placesGroup);
@@ -612,12 +640,13 @@ function buildYuanxiang(floorTex) {
   floorTex.rotation = Math.PI / 2;
   const mat = new THREE.MeshStandardMaterial({
     map: floorTex,
-    roughness: 0.88,
-    metalness: 0.04,
+    roughness: 0.94,
+    metalness: 0.02,
     transparent: true,
     opacity: yuanOpacity,
     side: THREE.DoubleSide,
     depthWrite: false,
+    fog: true,
   });
   yuanxiangMesh = new THREE.Mesh(geo, mat);
   yuanxiangMesh.rotation.x = -Math.PI / 2;
@@ -730,8 +759,16 @@ function buildWall(scrollTex) {
   scrollTex.offset.x = 1;
   const geo = new THREE.CylinderGeometry(WALL_R, WALL_R, WALL_H, 96, 1, true);
   const mat = new THREE.MeshStandardMaterial({
-    map: scrollTex, side: THREE.BackSide, roughness: 0.85, metalness: 0,
-    transparent: true, opacity: 0.92,
+    map: scrollTex,
+    side: THREE.BackSide,
+    color: 0xb8b0a4, // 略暗于圆相、低饱和
+    roughness: 0.94,
+    metalness: 0,
+    emissive: 0x000000,
+    transparent: true,
+    opacity: 0.78,
+    fog: true,
+    depthWrite: false,
   });
   const wall = new THREE.Mesh(geo, mat);
   wall.position.y = WALL_H * 0.5 + 0.05;
@@ -1279,12 +1316,7 @@ document.getElementById('styles').addEventListener('click', async (ev) => {
   const style = btn.dataset.style;
   document.querySelectorAll('#styles .pill').forEach((b) => b.classList.toggle('on', b === btn));
   currentStyle = style;
-  scene.background = new THREE.Color(style === 'night' ? 0x06080e : 0x0e1014);
-  scene.fog.color.set(style === 'night' ? 0x06080e : 0x0e1014);
-  // Basemap is MeshBasic (unlit); lights mainly affect 圆相/壁
-  amb.intensity = style === 'night' ? 0.42 : 0.55;
-  sun.intensity = style === 'night' ? 0.55 : 1.05;
-  fill.intensity = style === 'night' ? 0.25 : 0.35;
+  applyMood(style); // 湖雾 + 晨雾光；底图 MeshBasic 不吃光，雾/背景跟样式走
   if (!basemapTextures[style]) {
     showStatus('加载底图…');
     basemapTextures[style] = await loadTextureFromUrl(STYLE_FILES[style]);
@@ -1397,17 +1429,14 @@ async function main() {
     basemapTextures.night = await loadTextureFromUrl(STYLE_FILES.night);
     buildBasemap(basemapTextures.night);
     currentStyle = 'night';
-    scene.background = new THREE.Color(0x06080e);
-    scene.fog.color.set(0x06080e);
-    amb.intensity = 0.42;
-    sun.intensity = 0.55;
-    fill.intensity = 0.25;
+    applyMood('night');
   } catch (e) {
     console.warn('basemap night', e);
     try {
       basemapTextures.street = await loadTextureFromUrl(STYLE_FILES.street);
       buildBasemap(basemapTextures.street);
       currentStyle = 'street';
+      applyMood('street');
     } catch (e2) {
       console.warn('basemap street', e2);
     }
