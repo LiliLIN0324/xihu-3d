@@ -440,7 +440,7 @@ let yuanxiangVisible = true;
 let placesVisible = true;
 let namesExpanded = false; // 默认收起：只留星点；全局/单击展开短名
 let compareMode = 'overlay'; // overlay | modern | yuanxiang | swipe
-let activeSeg = 'c'; // single-select; 'all' = faint legend
+let activeSeg = 'c'; // single-select A–E (center player only)
 const basemapTextures = {};
 let currentStyle = 'night';
 const histTextures = {};
@@ -1225,20 +1225,10 @@ function focusPlace(pl, el) {
 }
 
 function syncSegmentButtons(id) {
-  document.querySelectorAll('#legend .seg').forEach((b) => {
-    b.classList.toggle('on', b.dataset.id === id);
-  });
+  // A–E only on center #ring-chapters (drawer legend removed)
   document.querySelectorAll('#ring-chapters .ch').forEach((b) => {
     b.classList.toggle('on', b.dataset.id === id);
   });
-  const segNameEl = document.getElementById('seg-name');
-  if (segNameEl) {
-    if (id === 'all') segNameEl.textContent = '全部 · 淡';
-    else {
-      const seg = SEGMENTS.find((s) => s.id === id);
-      segNameEl.textContent = seg ? seg.name : id;
-    }
-  }
 }
 
 /** 环壁显隐；同步播放器旁小开关。不改雾/色温。 */
@@ -1314,17 +1304,6 @@ function setMorphUI(on) {
   const b = document.getElementById('btn-morph');
   if (b) b.classList.toggle('on', on);
 }
-
-document.getElementById('legend').addEventListener('click', (ev) => {
-  const btn = ev.target.closest('.seg');
-  if (!btn) return;
-  const id = btn.dataset.id;
-  if (id === 'all') {
-    setActiveSegment('all', true);
-  } else {
-    jumpToChapter(id);
-  }
-});
 
 const ringChapters = document.getElementById('ring-chapters');
 if (ringChapters) {
