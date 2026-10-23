@@ -5,7 +5,9 @@
  * morph 开钉今址 lat/lng。圆相默认 TPS morph 贴今湖。
  * Defaults (2026-10-23 定稿): explode=0, morph ON, wall off, yuan opacity≈55%,
  * places only on active segment, night basemap (default), compare mode 叠合.
- * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁低饱和吃雾。
+ * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁开时 readable（近白/不吃雾）以便看清画。
+ * Ring chapters (2026-10-24): A–E 章节点选→开环壁+展开该段地名（钉在环壁 gx）+镜头对准；大钮「看环壁」；无强制串播；切段不改雾/色温。
+ * Ring paint (2026-10-24): 开环壁→贴图可读（白滤/高不透明/fog off）；色带压淡；章节镜头略拉近。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -439,7 +441,7 @@ let yuanxiangVisible = true;
 let placesVisible = true;
 let namesExpanded = false; // 默认收起：只留星点；全局/单击展开短名
 let compareMode = 'overlay'; // overlay | modern | yuanxiang | swipe
-let activeSeg = 'c'; // single-select; 'all' = faint legend
+let activeSeg = 'c'; // single-select A–E (center player only)
 const basemapTextures = {};
 let currentStyle = 'night';
 const histTextures = {};
@@ -451,6 +453,7 @@ let swipeSavedHistOpacity = DEFAULT_HIST_OPACITY;
 
 let wallTintBands = []; // Mesh[] for A–E tint opacity
 let wallSegSprites = [];
+let wallMesh = null; // Cylinder scroll wall (for readable material)
 
 const STYLE_FILES = {
   street: './basemap-street.jpg',
@@ -702,7 +705,18 @@ function applyMorph(amount) {
 
 function layoutPlacePins(amount) {
   const a = amount == null ? morphAmount : amount;
+  // 环壁已开且 activeSeg≠all：该段地名钉到环壁对应 gx（可读）；否则仍地板双位置
+  const onRing = !!(wallGroup && wallGroup.visible && activeSeg && activeSeg !== 'all');
   for (const L of placeLabelObjs) {
+    if (onRing && L.seg === activeSeg) {
+      const p = posOnRing(L.pl.gx, WALL_R * 0.88);
+      const y = WALL_H * 0.55;
+      L.obj.position.set(p.x, y, p.z);
+      if (L.dot) L.dot.position.set(p.x, y - 0.08, p.z);
+      if (L.glow) L.glow.position.set(p.x, y - 0.08, p.z);
+      L._wx = p.x; L._wz = p.z;
+      continue;
+    }
     // morph≈0 → 圆相 Freer/FLOOR_UV（画上正确位置）；morph 开 → 今址
     let sx, sz, tx, tz;
     if (L.fu != null) {
@@ -773,6 +787,7 @@ function buildWall(scrollTex) {
   const wall = new THREE.Mesh(geo, mat);
   wall.position.y = WALL_H * 0.5 + 0.05;
   wall.rotation.y = -Math.PI / 2;
+  wallMesh = wall;
   wallGroup.add(wall);
 
   wallTintBands = [];
@@ -942,6 +957,23 @@ function applyNamesExpanded(on) {
   }
 }
 
+
+/** 该段地名短名列表，≤max 个，超出加「等」 */
+function segmentPlaceShorts(segId, max = 6) {
+  const list = PLACES.filter((p) => p.seg === segId).map((p) => p.short);
+  if (!list.length) return '';
+  if (list.length <= max) return list.join('、');
+  return list.slice(0, max).join('、') + '等';
+}
+
+/** 展开当前 active 段地名短名（不强制收起「全部」） */
+function expandActiveSegmentNames() {
+  if (!activeSeg || activeSeg === 'all') return;
+  for (const L of placeLabelObjs) {
+    if (L.seg === activeSeg) L.el.classList.add('expanded');
+  }
+}
+
 function applySegmentFilter() {
   const allFaint = activeSeg === 'all';
   for (const L of placeLabelObjs) {
@@ -955,7 +987,7 @@ function applySegmentFilter() {
       L.el.classList.remove('dim');
       L.el.style.display = '';
       if (L.dot) { L.dot.visible = true; L.dot.material.opacity = 1; }
-      if (L.glow) { L.glow.visible = true; L.glow.material.opacity = 0.35; }
+      if (L.glow) { L.glow.visible = true; L.glow.material.opacity = 0.5; }
     } else {
       L.el.classList.remove('dim');
       L.el.style.display = 'none';
@@ -970,7 +1002,7 @@ function applySegmentFilter() {
       band.visible = true;
     } else {
       band.visible = id === activeSeg;
-      band.material.opacity = id === activeSeg ? 0.22 : 0;
+      band.material.opacity = id === activeSeg ? 0.08 : 0;
     }
   }
   for (const spr of wallSegSprites) {
@@ -980,7 +1012,7 @@ function applySegmentFilter() {
       spr.material.opacity = 0.35;
     } else {
       spr.visible = id === activeSeg;
-      spr.material.opacity = id === activeSeg ? 0.9 : 0;
+      spr.material.opacity = id === activeSeg ? 1 : 0;
     }
   }
 }
@@ -1158,10 +1190,12 @@ function applyCompareMode(mode) {
 function cameraForGx(gx, mode = 'place') {
   const a = alphaFromGx(gx);
   if (mode === 'segment') {
-    const r = YUAN_NS * 0.55;
+    // 略贴壁+略降相机：画卷纹样占画面主体，避免竖屏里只剩一条灰环带
+    const rCam = WALL_R * 0.42;
+    const rTgt = WALL_R * 0.98;
     return {
-      cam: new THREE.Vector3(r * Math.cos(a) * 0.7, 12, -r * Math.sin(a) * 0.7),
-      target: new THREE.Vector3(0, 0.4, 0),
+      cam: new THREE.Vector3(rCam * Math.cos(a), WALL_H * 0.55, -rCam * Math.sin(a)),
+      target: new THREE.Vector3(rTgt * Math.cos(a), WALL_H * 0.5, -rTgt * Math.sin(a)),
     };
   }
   const r = WALL_R * 0.5;
@@ -1221,31 +1255,97 @@ function focusPlace(pl, el) {
   showStatus(`${pl.short} · ${seg ? seg.name : pl.seg} · ${modeNote} · gx ${pl.gx}${loc}${uvNote}`);
 }
 
-function setActiveSegment(id, jump = true) {
-  activeSeg = id;
-  document.querySelectorAll('#legend .seg').forEach((b) => {
+function syncSegmentButtons(id) {
+  // A–E only on center #ring-chapters (drawer legend removed)
+  document.querySelectorAll('#ring-chapters .ch').forEach((b) => {
     b.classList.toggle('on', b.dataset.id === id);
   });
-  const segNameEl = document.getElementById('seg-name');
-  if (segNameEl) {
-    if (id === 'all') segNameEl.textContent = '全部 · 淡';
-    else {
-      const seg = SEGMENTS.find((s) => s.id === id);
-      segNameEl.textContent = seg ? seg.name : id;
-    }
+}
+
+/** 环壁贴图可读性：开环时近白/高不透明/不吃雾，夜景极弱 emissive 提亮；关可恢复略灰吃雾。不改全局雾。 */
+function applyWallReadable(on) {
+  if (!wallMesh || !wallMesh.material) return;
+  const m = wallMesh.material;
+  if (on) {
+    // 硬闸：灰滤+半透+雾会闷死贴图 → 纯白乘、满不透明、不吃雾、略自发光
+    m.color.setHex(0xffffff);
+    m.opacity = 1;
+    m.transparent = true; // keep for depthWrite:false stacking; opacity 1 = opaque look
+    m.fog = false;
+    m.emissive.setHex(0x1c1814);
+    m.roughness = 0.82;
+    m.metalness = 0;
+  } else {
+    m.color.setHex(0xb8b0a4);
+    m.opacity = 0.78;
+    m.fog = true;
+    m.emissive.setHex(0x000000);
+    m.roughness = 0.94;
   }
+  m.needsUpdate = true;
+}
+
+/** 环壁显隐；同步播放器旁小开关。不改雾/色温。开环时套 readable 材质以便看清画。 */
+function setWallVisible(on, { status = true } = {}) {
+  wallGroup.visible = !!on;
+  applyWallReadable(!!on);
+  const btn = document.getElementById('btn-wall');
+  if (btn) {
+    btn.classList.toggle('on', !!on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（点章节或「看环壁」会自动开）';
+  }
+  layoutPlacePins();
+  if (status) showStatus(on ? '环壁已开 · 可贴壁看画' : '环壁已关');
+}
+
+function ensureWallForPlay() {
+  if (!wallGroup.visible) setWallVisible(true, { status: false });
+}
+
+function setActiveSegment(id, jump = true) {
+  activeSeg = id;
+  syncSegmentButtons(id);
   applySegmentFilter();
+  layoutPlacePins();
+  // 切段不改雾/色温（applyMood 仅跟底图样式）
   if (jump && id !== 'all') {
     const seg = SEGMENTS.find((s) => s.id === id);
     if (!seg) return;
+    expandActiveSegmentNames();
     const mid = (Math.max(seg.gxMin, GX_PAINT_MIN) + Math.min(seg.gxMax, GX_PAINT_MAX)) / 2;
     const { cam, target } = cameraForGx(mid, 'segment');
     animateCamera(cam, target, 700);
     flashHighlight(mid, seg.color);
-    showStatus(seg.name);
+    const shorts = segmentPlaceShorts(id);
+    showStatus(shorts ? `${seg.name} · ${shorts}` : seg.name);
   } else if (id === 'all') {
     showStatus('全部扇区 · 淡色图例');
   }
+}
+
+/** 大钮「看环壁」：开环壁 + 对准当前章（无自动串播）。 */
+function viewRingChapter() {
+  const id = (activeSeg && activeSeg !== 'all') ? activeSeg : 'c';
+  ensureWallForPlay();
+  setActiveSegment(id, true);
+  const seg = SEGMENTS.find((s) => s.id === id);
+  const shorts = segmentPlaceShorts(id);
+  if (seg) {
+    showStatus(shorts ? `看环壁 · ${seg.name} · ${shorts}` : `看环壁 · ${seg.name}`);
+  } else {
+    showStatus('看环壁');
+  }
+}
+
+function jumpToChapter(id) {
+  if (!id || id === 'all') {
+    setActiveSegment(id || 'all', true);
+    return;
+  }
+  // 点章节：开环壁、高亮该章、镜头对准该段环壁画
+  ensureWallForPlay();
+  setActiveSegment(id, true);
 }
 
 function zeroExplodeUI() {
@@ -1269,11 +1369,21 @@ function setMorphUI(on) {
   if (b) b.classList.toggle('on', on);
 }
 
-document.getElementById('legend').addEventListener('click', (ev) => {
-  const btn = ev.target.closest('.seg');
-  if (!btn) return;
-  setActiveSegment(btn.dataset.id, true);
-});
+const ringChapters = document.getElementById('ring-chapters');
+if (ringChapters) {
+  ringChapters.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.ch');
+    if (!btn) return;
+    jumpToChapter(btn.dataset.id);
+  });
+}
+
+const btnRingPlay = document.getElementById('btn-ring-play');
+if (btnRingPlay) {
+  btnRingPlay.addEventListener('click', () => {
+    viewRingChapter();
+  });
+}
 
 document.getElementById('compare-modes').addEventListener('click', (ev) => {
   const btn = ev.target.closest('.mode');
@@ -1364,10 +1474,13 @@ document.getElementById('yuan-opacity').addEventListener('input', (ev) => {
 });
 
 document.getElementById('btn-wall').addEventListener('click', (ev) => {
-  const on = ev.currentTarget.classList.toggle('on');
-  wallGroup.visible = on;
-  showStatus(on ? '环壁已开（试验）' : '环壁已关');
+  const on = !wallGroup.visible;
+  setWallVisible(on);
 });
+// 播放器初始态：环壁关、章节 C 高亮（与 activeSeg 一致）
+setWallVisible(false, { status: false });
+syncSegmentButtons(activeSeg);
+
 
 document.getElementById('btn-morph').addEventListener('click', (ev) => {
   const on = ev.currentTarget.classList.toggle('on');
