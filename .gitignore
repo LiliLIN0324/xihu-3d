@@ -1,0 +1,11 @@
+*.bak*
+_preview*/
+_upload*/
+_align*/
+_crop*/
+_hist*/
+hist/
+hist-*.jpg
+basemap-*.jpg
+*.b64.js
+.DS_Store

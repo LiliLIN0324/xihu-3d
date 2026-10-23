@@ -1,0 +1,9 @@
+{
+  "lat_n": 30.3,
+  "lat_s": 30.2,
+  "lon_w": 120.08,
+  "lon_e": 120.2,
+  "zoom": 13,
+  "orientation": "north-up",
+  "note": "\u5706\u76f8 layer rotated to north-up to match basemap"
+}

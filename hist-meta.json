@@ -1,0 +1,104 @@
+{
+  "source": "中央研究院 杭州百年歷史地圖 WMTS",
+  "wmts": "https://gis.sinica.edu.tw/hangzhou/wmts",
+  "portal": "https://gis.sinica.edu.tw/hangzhou/",
+  "crs": "GoogleMapsCompatible (EPSG:3857 / Web Mercator)",
+  "bbox": {
+    "lat_n": 30.3,
+    "lat_s": 30.2,
+    "lon_w": 120.08,
+    "lon_e": 120.2
+  },
+  "zoom_stitched": 14,
+  "note": "示意叠合/分割对照，非测绘级配准。历史层已按西湖名胜 GCP（断桥、保俶、雷峰、岳坟、苏堤、涌金/钱塘门等）做 affine+TPS 二次配准贴今 basemap；瓦片缓存为本站静态图。",
+  "attribution": "近代实测图叠合 · 中央研究院杭州百年歷史地圖（https://gis.sinica.edu.tw/hangzhou/）",
+  "layers": [
+    {
+      "year": 1914,
+      "id": "Hangzhou_25K_1914",
+      "title": "杭縣城",
+      "file": "hist-1914.jpg"
+    },
+    {
+      "year": 1929,
+      "id": "Hangzhou_15K_1929",
+      "title": "杭州西湖全圖",
+      "file": "hist-1929.jpg"
+    },
+    {
+      "year": 1932,
+      "id": "Hangzhou_10K_1932",
+      "title": "杭州市近傍一萬分一地形圖",
+      "file": "hist-1932.jpg"
+    },
+    {
+      "year": 1938,
+      "id": "Hangzhou_15K_1938",
+      "title": "杭州西湖地圖",
+      "file": "hist-1938.jpg"
+    },
+    {
+      "year": 1947,
+      "id": "Hangzhou_40K_1947",
+      "title": "浙江省杭州市全圖",
+      "file": "hist-1947.jpg"
+    },
+    {
+      "year": 1964,
+      "id": "airphoto_hangzhou_u2",
+      "title": "杭州舊航照影像",
+      "file": "hist-1964.jpg"
+    }
+  ],
+  "skipped": [
+    {
+      "id": "Hangzhou_10K_1947",
+      "reason": "市郊局部，bbox 偏西北，未盖西湖主区"
+    },
+    {
+      "id": "Hangzhou_1931",
+      "reason": "拱宸桥日租界，范围过小"
+    },
+    {
+      "id": "Hangzhou_2K_1931",
+      "reason": "拱宸桥通商场，范围过小"
+    },
+    {
+      "id": "Hangzhou_20K",
+      "reason": "杭州市区图无明确年份"
+    },
+    {
+      "id": "hangzhou_10K_1929",
+      "reason": "与已有 1929 西湖全图同年，不重复"
+    }
+  ],
+  "alignment": {
+    "method": "affine + regularized TPS",
+    "reference": "basemap-meta.json bbox / modern lat-lng",
+    "gcps_file": "_align_check/gcp-1938.json",
+    "n_gcps": 10,
+    "gcp_ids": [
+      "sudi_n",
+      "sudi_m",
+      "sudi_s",
+      "duanqiao",
+      "baochu",
+      "leifeng",
+      "yuefen",
+      "yongjin",
+      "gushan",
+      "xiling"
+    ],
+    "years_warped": [
+      1914,
+      1929,
+      1932,
+      1938,
+      1947,
+      1964
+    ],
+    "warp_source": "GCPs measured on 1938; same warp maps applied to all years (示意级)",
+    "default": "aligned hist textures on by default",
+    "raw_backup": "hist/raw/"
+  }
+}
