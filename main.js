@@ -4,7 +4,7 @@
  * 星点：默认收起仅辉光星；点一下/全局展开短名。双位置：morph≈0 钉圆相 Freer/FLOOR_UV；
  * morph 开钉今址 lat/lng。圆相默认 TPS morph 贴今湖。
  * Defaults (2026-10-23 定稿): explode=0, morph ON, wall off, yuan opacity≈55%,
- * places only on active segment, street basemap, compare mode 叠合.
+ * places only on active segment, night basemap (default), compare mode 叠合.
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -413,7 +413,7 @@ let namesExpanded = false; // 默认收起：只留星点；全局/单击展开�
 let compareMode = 'overlay'; // overlay | modern | yuanxiang | swipe
 let activeSeg = 'c'; // single-select; 'all' = faint legend
 const basemapTextures = {};
-let currentStyle = 'street';
+let currentStyle = 'night';
 const histTextures = {};
 let currentHistYear = 'now';
 let histOpacity = DEFAULT_HIST_OPACITY;
@@ -900,7 +900,8 @@ function applyNamesExpanded(on) {
   const btn = document.getElementById('btn-names');
   if (btn) {
     btn.classList.toggle('on', namesExpanded);
-    btn.textContent = namesExpanded ? '星名·开' : '星名';
+    btn.textContent = '星名';
+    btn.title = namesExpanded ? '星名已展开（再点收起）' : '全局展开/收起短名（默认收起）';
   }
 }
 
@@ -1073,6 +1074,7 @@ function applyCompareMode(mode) {
     yuanGroup.visible = true;
     document.getElementById('btn-yuanxiang').classList.add('on');
     document.getElementById('btn-yuanxiang').textContent = '圆相';
+    document.getElementById('btn-yuanxiang').title = '显示/隐藏圆相层';
     setYuanOpacity(yuanOpacity);
     if (opacityWrap) opacityWrap.style.display = '';
     if (histOpWrap && histOn) histOpWrap.classList.add('show');
@@ -1085,7 +1087,8 @@ function applyCompareMode(mode) {
     yuanxiangVisible = false;
     yuanGroup.visible = false;
     document.getElementById('btn-yuanxiang').classList.remove('on');
-    document.getElementById('btn-yuanxiang').textContent = '圆相·隐';
+    document.getElementById('btn-yuanxiang').textContent = '圆相';
+    document.getElementById('btn-yuanxiang').title = '圆相已隐（点此或回叠合）';
     if (opacityWrap) opacityWrap.style.display = 'none';
     if (histOpWrap && histOn) histOpWrap.classList.add('show');
   } else if (mode === 'yuanxiang') {
@@ -1295,7 +1298,8 @@ document.getElementById('btn-places').addEventListener('click', (ev) => {
   placesVisible = on;
   labelRenderer.domElement.classList.toggle('labels-hidden', !on);
   placesGroup.visible = on;
-  ev.currentTarget.textContent = on ? '星点' : '星点·隐';
+  ev.currentTarget.textContent = '星点';
+  ev.currentTarget.title = on ? '显示/隐藏星点' : '星点已隐（再点显示）';
 });
 
 const btnNames = document.getElementById('btn-names');
@@ -1313,7 +1317,8 @@ document.getElementById('btn-yuanxiang').addEventListener('click', (ev) => {
   const on = ev.currentTarget.classList.toggle('on');
   yuanxiangVisible = on;
   yuanGroup.visible = on;
-  ev.currentTarget.textContent = on ? '圆相' : '圆相·隐';
+  ev.currentTarget.textContent = '圆相';
+  ev.currentTarget.title = on ? '显示/隐藏圆相层' : '圆相已隐（再点显示）';
   const opacityWrap = document.getElementById('opacity-wrap');
   if (opacityWrap && (compareMode === 'overlay' || compareMode === 'swipe')) {
     opacityWrap.style.display = on ? '' : 'none';
@@ -1389,10 +1394,23 @@ async function main() {
   }
 
   try {
-    basemapTextures.street = await loadTextureFromUrl(STYLE_FILES.street);
-    buildBasemap(basemapTextures.street);
+    basemapTextures.night = await loadTextureFromUrl(STYLE_FILES.night);
+    buildBasemap(basemapTextures.night);
+    currentStyle = 'night';
+    scene.background = new THREE.Color(0x06080e);
+    scene.fog.color.set(0x06080e);
+    amb.intensity = 0.42;
+    sun.intensity = 0.55;
+    fill.intensity = 0.25;
   } catch (e) {
-    console.warn('basemap', e);
+    console.warn('basemap night', e);
+    try {
+      basemapTextures.street = await loadTextureFromUrl(STYLE_FILES.street);
+      buildBasemap(basemapTextures.street);
+      currentStyle = 'street';
+    } catch (e2) {
+      console.warn('basemap street', e2);
+    }
   }
 
   buildYuanxiang(floorTex);
