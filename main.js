@@ -5,8 +5,9 @@
  * morph 开钉今址 lat/lng。圆相默认 TPS morph 贴今湖。
  * Defaults (2026-10-23 定稿): explode=0, morph ON, wall off, yuan opacity≈55%,
  * places only on active segment, night basemap (default), compare mode 叠合.
- * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁低饱和吃雾。
+ * Mood P0 (2026-10-24): 湖雾青灰 / 夜深青灰；晨雾暖主光+青补光；环壁开时 readable（近白/不吃雾）以便看清画。
  * Ring chapters (2026-10-24): A–E 章节点选→开环壁+展开该段地名（钉在环壁 gx）+镜头对准；大钮「看环壁」；无强制串播；切段不改雾/色温。
+ * Ring paint (2026-10-24): 开环壁→贴图可读（白滤/高不透明/fog off）；色带压淡；章节镜头略拉近。
  * Timeline + swipe 分割对照保留。脚注：示意对照，非测绘级。
  * 历史层默认已二次配准（1938 GCP→affine+TPS 贴今 basemap；同 warp 应用于各年）。
  * Freer UV (u:南→北, v:东→西) → north-up: nu=(1-v), nv=u
@@ -452,6 +453,7 @@ let swipeSavedHistOpacity = DEFAULT_HIST_OPACITY;
 
 let wallTintBands = []; // Mesh[] for A–E tint opacity
 let wallSegSprites = [];
+let wallMesh = null; // Cylinder scroll wall (for readable material)
 
 const STYLE_FILES = {
   street: './basemap-street.jpg',
@@ -785,6 +787,7 @@ function buildWall(scrollTex) {
   const wall = new THREE.Mesh(geo, mat);
   wall.position.y = WALL_H * 0.5 + 0.05;
   wall.rotation.y = -Math.PI / 2;
+  wallMesh = wall;
   wallGroup.add(wall);
 
   wallTintBands = [];
@@ -999,7 +1002,7 @@ function applySegmentFilter() {
       band.visible = true;
     } else {
       band.visible = id === activeSeg;
-      band.material.opacity = id === activeSeg ? 0.32 : 0;
+      band.material.opacity = id === activeSeg ? 0.08 : 0;
     }
   }
   for (const spr of wallSegSprites) {
@@ -1187,12 +1190,12 @@ function applyCompareMode(mode) {
 function cameraForGx(gx, mode = 'place') {
   const a = alphaFromGx(gx);
   if (mode === 'segment') {
-    // 环内看向该段环壁，略拉远以看见一段画（非俯视湖心）
-    const rCam = WALL_R * 0.28;
+    // 略贴壁+略降相机：画卷纹样占画面主体，避免竖屏里只剩一条灰环带
+    const rCam = WALL_R * 0.42;
     const rTgt = WALL_R * 0.98;
     return {
-      cam: new THREE.Vector3(rCam * Math.cos(a), WALL_H * 0.9, -rCam * Math.sin(a)),
-      target: new THREE.Vector3(rTgt * Math.cos(a), WALL_H * 0.48, -rTgt * Math.sin(a)),
+      cam: new THREE.Vector3(rCam * Math.cos(a), WALL_H * 0.55, -rCam * Math.sin(a)),
+      target: new THREE.Vector3(rTgt * Math.cos(a), WALL_H * 0.5, -rTgt * Math.sin(a)),
     };
   }
   const r = WALL_R * 0.5;
@@ -1259,9 +1262,33 @@ function syncSegmentButtons(id) {
   });
 }
 
-/** 环壁显隐；同步播放器旁小开关。不改雾/色温。 */
+/** 环壁贴图可读性：开环时近白/高不透明/不吃雾，夜景极弱 emissive 提亮；关可恢复略灰吃雾。不改全局雾。 */
+function applyWallReadable(on) {
+  if (!wallMesh || !wallMesh.material) return;
+  const m = wallMesh.material;
+  if (on) {
+    // 硬闸：灰滤+半透+雾会闷死贴图 → 纯白乘、满不透明、不吃雾、略自发光
+    m.color.setHex(0xffffff);
+    m.opacity = 1;
+    m.transparent = true; // keep for depthWrite:false stacking; opacity 1 = opaque look
+    m.fog = false;
+    m.emissive.setHex(0x1c1814);
+    m.roughness = 0.82;
+    m.metalness = 0;
+  } else {
+    m.color.setHex(0xb8b0a4);
+    m.opacity = 0.78;
+    m.fog = true;
+    m.emissive.setHex(0x000000);
+    m.roughness = 0.94;
+  }
+  m.needsUpdate = true;
+}
+
+/** 环壁显隐；同步播放器旁小开关。不改雾/色温。开环时套 readable 材质以便看清画。 */
 function setWallVisible(on, { status = true } = {}) {
   wallGroup.visible = !!on;
+  applyWallReadable(!!on);
   const btn = document.getElementById('btn-wall');
   if (btn) {
     btn.classList.toggle('on', !!on);
@@ -1269,7 +1296,7 @@ function setWallVisible(on, { status = true } = {}) {
     btn.title = on ? '环壁已开（再点关闭）' : '环壁开关（点章节或「看环壁」会自动开）';
   }
   layoutPlacePins();
-  if (status) showStatus(on ? '环壁已开' : '环壁已关');
+  if (status) showStatus(on ? '环壁已开 · 可贴壁看画' : '环壁已关');
 }
 
 function ensureWallForPlay() {
